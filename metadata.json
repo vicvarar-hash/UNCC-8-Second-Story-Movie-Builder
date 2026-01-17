@@ -1,0 +1,5 @@
+{
+  "name": "UNCC 8-Second Story Movie Builder",
+  "description": "An AI-powered movie builder that breaks stories into 8-second shots using Gemini 3 Pro for direction and Veo 3 for video generation.",
+  "requestFramePermissions": []
+}
