@@ -1,57 +1,52 @@
 
-import { GoogleGenAI, Type, Schema } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import { Shot, AnnotatedImage } from "../types";
 
-// Helper to get AI client - MUST be called just before use to ensure latest API key
-const getAiClient = () => {
-  // The API key is injected by the environment after selection
-  return new GoogleGenAI({ apiKey: process.env.API_KEY });
+/**
+ * Robust API key resolution for both AI Studio and standalone Production environments.
+ */
+export const getCurrentApiKey = (): string => {
+  const aistudio = (window as any).aistudio;
+  
+  // 1. Check if running inside AI Studio with a selected key
+  if (aistudio?.hasSelectedApiKey?.()) {
+    // In AI Studio, the platform injects the key into process.env.API_KEY
+    return process.env.API_KEY || '';
+  }
+
+  // 2. Fallback to localStorage for standalone Cloud Run/Production deployments
+  const storedKey = localStorage.getItem("GEMINI_API_KEY");
+  if (storedKey && storedKey.length > 10) {
+    return storedKey;
+  }
+
+  throw new Error("No API key found. Please set your Gemini API key in Settings.");
 };
 
-const SHOT_SCHEMA: Schema = {
+const SHOT_SCHEMA = {
   type: Type.OBJECT,
   properties: {
-    action: { type: Type.STRING, description: "Detailed description of the action occurring in the 8s shot. Focus on movement and pacing." },
-    camera: { type: Type.STRING, description: "Precise cinematic direction. Specify lens choice (e.g., 24mm, 85mm), camera movement (e.g., 'Truck left', 'Steadicam follow', 'Slow push-in', 'Crane up'), and framing (e.g., 'Low angle', 'Over-the-shoulder', 'Wide master')." },
-    mood: { type: Type.STRING, description: "Specific lighting setup (e.g., 'Rembrandt lighting', 'Neon rim light', 'Overcast softbox') and color grading palette." },
-    audio: { type: Type.STRING, description: "Detailed Sound Design. Describe the Ambience (background noise), Sound Effects (sync to action), and Music/Score status. Ensure flow from previous shot." },
-    dialogue: { type: Type.STRING, description: "Any dialogue or 'None'." },
-    visual_prompt: { type: Type.STRING, description: "A highly detailed, self-contained prompt for Veo 3. MUST include: Subject details, Action, Environment, Lighting, Camera Angle, Lens Type, Film Stock, Audio keywords, and Style keywords." },
-    reasoning: { type: Type.STRING, description: "Brief explanation of why this shot follows the previous one logically." }
+    action: { type: Type.STRING, description: "Detailed action description." },
+    camera: { type: Type.STRING, description: "Lens and movement." },
+    mood: { type: Type.STRING, description: "Lighting and color." },
+    audio: { type: Type.STRING, description: "Sound Design. Describe how it TRANSITIONS from the previous shot's audio." },
+    dialogue: { type: Type.STRING, description: "Dialogue or 'None'." },
+    visual_prompt: { type: Type.STRING, description: "Self-contained Veo 3 prompt." },
+    reasoning: { type: Type.STRING, description: "Narrative flow reasoning." }
   },
   required: ["action", "camera", "mood", "audio", "dialogue", "visual_prompt", "reasoning"],
 };
 
-// Helper to parse Data URL correctly
 const parseDataUrl = (dataUrl: string) => {
-  // More robust regex to handle various mime types (e.g. image/jpeg, image/png)
   const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-  if (!matches || matches.length !== 3) {
-    throw new Error("Invalid data URL format");
-  }
-  return {
-    mimeType: matches[1],
-    imageBytes: matches[2]
-  };
+  if (!matches || matches.length !== 3) throw new Error("Invalid data URL");
+  return { mimeType: matches[1], imageBytes: matches[2] };
 };
 
-// Helper for retrying operations with exponential backoff on 429 errors
-const retryWithBackoff = async <T>(
-  fn: () => Promise<T>,
-  retries = 3,
-  delay = 5000
-): Promise<T> => {
-  try {
-    return await fn();
-  } catch (error: any) {
-    const isRateLimit = 
-      error.status === 429 || 
-      error.code === 429 || 
-      (error.message && (error.message.includes('429') || error.message.includes('RESOURCE_EXHAUSTED'))) ||
-      error.status === 'RESOURCE_EXHAUSTED';
-
+const retryWithBackoff = async <T>(fn: () => Promise<T>, retries = 3, delay = 5000): Promise<T> => {
+  try { return await fn(); } catch (error: any) {
+    const isRateLimit = error.status === 429 || error.code === 429 || (error.message && error.message.includes('429'));
     if (isRateLimit && retries > 0) {
-      console.warn(`Rate limit hit. Retrying in ${delay}ms... (${retries} attempts left)`);
       await new Promise(resolve => setTimeout(resolve, delay));
       return retryWithBackoff(fn, retries - 1, delay * 2);
     }
@@ -59,164 +54,85 @@ const retryWithBackoff = async <T>(
   }
 };
 
-export const generateShotDetails = async (
-  outline: string,
-  style: string,
-  audioStyle: string,
-  shotNumber: number,
-  previousShots: Shot[]
-): Promise<any> => {
-  const ai = getAiClient();
-  
-  // Construct context from previous shots to maintain consistency
-  const historyContext = previousShots.map(s => 
-    `Shot ${s.id}: ${s.description}. Visuals: ${s.visualPrompt}. Audio: ${s.audio}`
-  ).join("\n");
+export const generateShotDetails = async (outline: string, style: string, audioStyle: string, shotNumber: number, previousShots: Shot[]): Promise<any> => {
+  const apiKey = getCurrentApiKey();
+  const ai = new GoogleGenAI({ apiKey });
+  const historyContext = previousShots.map(s => `Shot ${s.id}: ${s.description}. Audio: ${s.audio}`).join("\n");
 
   const prompt = `
-    You are a world-class Director of Photography, Sound Designer, and Film Director.
+    Director of Photography & Sound Designer Persona.
+    Outline: "${outline}" | Visual Style: "${style}" | Audio Style: "${audioStyle}"
+    Shot #${shotNumber} Planning.
     
-    Global Story Outline: "${outline}"
-    Visual Style: "${style}"
-    Audio/Soundtrack Style: "${audioStyle}"
+    Context:
+    ${historyContext || "Opening shot."}
     
-    Your task: Plan Shot #${shotNumber} (Duration: 8 seconds).
-    
-    Context of previous shots (maintain continuity of characters, setting, lighting AND audio flow):
-    ${historyContext || "This is the opening shot."}
-    
-    Instructions:
-    1. **Cinematography**: Use technical language (e.g., "Rack focus," "Dolly zoom," "Anamorphic lens").
-    2. **Sound Design**: Create an immersive audio landscape. If there was music in the previous shot, continue it. If there is a sudden action, describe the SFX.
-    3. **Continuity**: Ensure character details and audio atmosphere flow naturally from the previous shot.
-    
-    Output a JSON object describing the shot.
-    
-    For the 'visual_prompt' field:
-    - This goes directly to the Video AI (Veo 3).
-    - Structure: [Subject + Action], [Environment], [Lighting], [Camera], [Audio/Sound Keywords], [Style].
-    - IMPORTANT: Include specific audio instructions in this prompt so the video generator creates matching sound. Example: "...Soundtrack of intense ticking clock, muffled rain."
+    CRITICAL AUDIO RULE: You must describe how the audio FLOWS from the previous shot. 
+    Include ambient matching (same wind noise, same mechanical hum).
   `;
 
   const response = await ai.models.generateContent({
     model: "gemini-3-pro-preview",
     contents: prompt,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: SHOT_SCHEMA,
-      thinkingConfig: { thinkingBudget: 2048 }, 
-    },
+    config: { responseMimeType: "application/json", responseSchema: SHOT_SCHEMA, thinkingConfig: { thinkingBudget: 2048 } },
   });
 
-  const text = response.text;
-  if (!text) throw new Error("No response from Gemini");
-  
-  try {
-    return JSON.parse(text);
-  } catch (e) {
-    console.error("Failed to parse JSON", text);
-    throw new Error("Invalid JSON format from Gemini");
-  }
+  return JSON.parse(response.text || "{}");
 };
 
-export const generateVideo = async (
-  prompt: string,
-  audioPrompt: string, // Specific audio instructions
-  startFrame?: string, 
-  referenceImages: AnnotatedImage[] = [] 
-): Promise<string> => {
-  const ai = getAiClient();
+export const generateVideo = async (prompt: string, audioPrompt: string, startFrame?: string, referenceImages: AnnotatedImage[] = []): Promise<string> => {
+  let apiKey = getCurrentApiKey();
+  let ai = new GoogleGenAI({ apiKey });
   
-  // Determine Model & Prompt Strategy
-  let model = "veo-3.1-generate-preview";
-  if (startFrame) {
-      model = "veo-3.1-fast-generate-preview";
-  }
+  let model = startFrame ? "veo-3.1-fast-generate-preview" : "veo-3.1-generate-preview";
+  let finalPrompt = `${prompt} \n\nAUDIO SYNC: ${audioPrompt}`;
 
-  // Combine Visual and Audio prompts for Veo
-  // Veo 3 can generate audio if prompted.
-  let finalPrompt = `${prompt} \n\nAudio/Sound: ${audioPrompt}`;
-
-  // ALWAYS append reference image usage instructions to the prompt text.
-  if (referenceImages.length > 0) {
-    const usageInstructions = referenceImages
-      .filter(img => img.label && img.label.trim().length > 0)
-      .map((img, idx) => `[Reference Note ${idx + 1}: ${img.label}]`)
-      .join(" ");
-    
-    if (usageInstructions) {
-        finalPrompt = `${finalPrompt} \n\n${usageInstructions}`;
-    }
-  }
-
-  console.log(`Generating video with model: ${model}`);
-  console.log("Start frame present:", !!startFrame);
-
-  let operation;
-  
   try {
-    const config: any = {
-        numberOfVideos: 1,
-        resolution: '720p', 
-        aspectRatio: '16:9'
-    };
-
     const requestPayload: any = {
       model,
       prompt: finalPrompt,
-      config
+      config: { numberOfVideos: 1, resolution: '720p', aspectRatio: '16:9' }
     };
 
     if (startFrame) {
       const { mimeType, imageBytes } = parseDataUrl(startFrame);
-      requestPayload.image = {
-        imageBytes,
-        mimeType
-      };
+      requestPayload.image = { imageBytes, mimeType };
     } else if (referenceImages.length > 0) {
-      config.referenceImages = referenceImages.map(img => {
+      requestPayload.config.referenceImages = referenceImages.map(img => {
         const { mimeType, imageBytes } = parseDataUrl(img.url);
-        return {
-          image: {
-            imageBytes,
-            mimeType
-          },
-          referenceType: 'ASSET', 
-        };
+        return { image: { imageBytes, mimeType }, referenceType: 'ASSET' };
       });
     }
 
-    operation = await retryWithBackoff(() => ai.models.generateVideos(requestPayload), 3, 5000);
+    let operation: any = await retryWithBackoff(() => ai.models.generateVideos(requestPayload));
 
     while (!operation.done) {
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      operation = await retryWithBackoff(() => ai.operations.getVideosOperation({ operation }), 3, 3000);
-      console.log("Polling Veo operation status...");
-    }
-
-    if (operation.error) {
-      console.error("Veo Operation Error:", operation.error);
-      throw new Error(`Veo generation failed: ${operation.error.message || JSON.stringify(operation.error)}`);
+      await new Promise(resolve => setTimeout(resolve, 10000));
+      operation = await retryWithBackoff(() => ai.operations.getVideosOperation({ operation }));
     }
 
     const videoUri = operation.response?.generatedVideos?.[0]?.video?.uri;
-    if (!videoUri) {
-       console.error("Full Operation Response:", operation);
-       throw new Error("No video URI returned. The prompt may have been filtered.");
-    }
+    if (!videoUri) throw new Error("No video URI returned.");
 
-    const downloadUrl = `${videoUri}&key=${process.env.API_KEY}`;
-    const response = await fetch(downloadUrl);
+    apiKey = getCurrentApiKey();
+    const url = new URL(videoUri);
+    url.searchParams.set('key', apiKey);
+    const downloadUrl = url.toString();
     
+    const response = await fetch(downloadUrl, { method: 'GET', mode: 'cors' });
+
     if (!response.ok) {
-        throw new Error(`Failed to download video content: ${response.statusText}`);
+      const errorText = await response.text();
+      if (response.status === 400 && errorText.includes("API key not valid")) {
+        throw new Error("REAUTH_REQUIRED: Invalid API key.");
+      }
+      throw new Error(`Failed to download: ${response.status}`);
     }
 
     const blob = await response.blob();
-    return URL.createObjectURL(blob);
-
-  } catch (error) {
-    console.error("Veo generation error:", error);
-    throw error;
+    return URL.createObjectURL(new Blob([blob], { type: 'video/mp4' }));
+  } catch (error) { 
+    console.error("[Veo] Error:", error);
+    throw error; 
   }
 };

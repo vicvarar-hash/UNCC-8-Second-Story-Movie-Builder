@@ -1,4 +1,5 @@
 
+
 export interface AnnotatedImage {
   id: string;
   url: string;
@@ -11,7 +12,7 @@ export interface Shot {
   action: string;
   camera: string;
   mood: string;
-  audio: string; // New field for sound design
+  audio: string; // Sound design prompt
   dialogue: string;
   visualPrompt: string;
   videoUrl?: string;
@@ -30,7 +31,7 @@ export interface Shot {
 export interface StoryState {
   outline: string;
   style: string;
-  audioStyle: string; // New global audio context
+  audioStyle: string; // Global audio context
   referenceImages: string[]; 
   shots: Shot[];
 }
@@ -45,10 +46,5 @@ export interface GeminiShotResponse {
   reasoning: string;
 }
 
-// Extend AIStudio interface directly to avoid conflict with existing Window.aistudio definition
-declare global {
-  interface AIStudio {
-    hasSelectedApiKey: () => Promise<boolean>;
-    openSelectKey: () => Promise<void>;
-  }
-}
+// AIStudio is assumed to be provided by the environment's global Window interface.
+// If the environment does not provide it, cast window to any where used to avoid TS errors.
