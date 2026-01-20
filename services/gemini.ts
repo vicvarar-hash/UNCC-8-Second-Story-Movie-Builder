@@ -1,91 +1,264 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { Shot, AnnotatedImage } from "../types";
+import { Shot, ShotPlan, GenerationAttempt, SelfReviewRubric } from "../types";
 
-/**
- * Robust API key resolution for both AI Studio and standalone Production environments.
- */
 export const getCurrentApiKey = (): string => {
   const aistudio = (window as any).aistudio;
-  
-  // 1. Check if running inside AI Studio with a selected key
   if (aistudio?.hasSelectedApiKey?.()) {
-    // In AI Studio, the platform injects the key into process.env.API_KEY
     return process.env.API_KEY || '';
   }
-
-  // 2. Fallback to localStorage for standalone Cloud Run/Production deployments
   const storedKey = localStorage.getItem("GEMINI_API_KEY");
   if (storedKey && storedKey.length > 10) {
     return storedKey;
   }
-
-  throw new Error("No API key found. Please set your Gemini API key in Settings.");
+  return process.env.API_KEY || '';
 };
 
-const SHOT_SCHEMA = {
+const RUBRIC_SCHEMA = {
   type: Type.OBJECT,
   properties: {
-    action: { type: Type.STRING, description: "Detailed action description." },
-    camera: { type: Type.STRING, description: "Lens and movement." },
-    mood: { type: Type.STRING, description: "Lighting and color." },
-    audio: { type: Type.STRING, description: "Sound Design. Describe how it TRANSITIONS from the previous shot's audio." },
-    dialogue: { type: Type.STRING, description: "Dialogue or 'None'." },
-    visual_prompt: { type: Type.STRING, description: "Self-contained Veo 3 prompt." },
-    reasoning: { type: Type.STRING, description: "Narrative flow reasoning." }
-  },
-  required: ["action", "camera", "mood", "audio", "dialogue", "visual_prompt", "reasoning"],
-};
-
-const parseDataUrl = (dataUrl: string) => {
-  const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-  if (!matches || matches.length !== 3) throw new Error("Invalid data URL");
-  return { mimeType: matches[1], imageBytes: matches[2] };
-};
-
-const retryWithBackoff = async <T>(fn: () => Promise<T>, retries = 3, delay = 5000): Promise<T> => {
-  try { return await fn(); } catch (error: any) {
-    const isRateLimit = error.status === 429 || error.code === 429 || (error.message && error.message.includes('429'));
-    if (isRateLimit && retries > 0) {
-      await new Promise(resolve => setTimeout(resolve, delay));
-      return retryWithBackoff(fn, retries - 1, delay * 2);
+    narrativeConsistency: {
+      type: Type.OBJECT,
+      properties: { score: { type: Type.NUMBER }, reasoning: { type: Type.STRING } },
+      required: ["score", "reasoning"]
+    },
+    visualFidelity: {
+      type: Type.OBJECT,
+      properties: { score: { type: Type.NUMBER }, reasoning: { type: Type.STRING } },
+      required: ["score", "reasoning"]
+    },
+    continuity: {
+      type: Type.OBJECT,
+      properties: { score: { type: Type.NUMBER }, reasoning: { type: Type.STRING } },
+      required: ["score", "reasoning"]
+    },
+    physicsAndLogic: {
+      type: Type.OBJECT,
+      properties: { score: { type: Type.NUMBER }, reasoning: { type: Type.STRING } },
+      required: ["score", "reasoning"]
+    },
+    overallConfidence: { type: Type.STRING, description: "Low, Medium, or High" },
+    summary: { type: Type.STRING },
+    promptRevision: {
+      type: Type.OBJECT,
+      properties: {
+        revisedVideoPrompt: { type: Type.STRING },
+        changes: { type: Type.ARRAY, items: { type: Type.STRING } },
+        regenerationHints: { type: Type.ARRAY, items: { type: Type.STRING } }
+      },
+      required: ["revisedVideoPrompt", "changes", "regenerationHints"]
     }
-    throw error;
-  }
+  },
+  required: ["narrativeConsistency", "visualFidelity", "continuity", "physicsAndLogic", "overallConfidence", "summary", "promptRevision"]
 };
 
-export const generateShotDetails = async (outline: string, style: string, audioStyle: string, shotNumber: number, previousShots: Shot[]): Promise<any> => {
+export const sampleFrames = async (videoSrc: string | File, count: number = 3): Promise<string[]> => {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const frames: string[] = [];
+
+    video.crossOrigin = "anonymous";
+    video.muted = true;
+    
+    if (typeof videoSrc === 'string') {
+      video.src = videoSrc;
+    } else {
+      video.src = URL.createObjectURL(videoSrc);
+    }
+
+    video.onloadedmetadata = async () => {
+      const duration = video.duration;
+      const interval = duration / (count + 1);
+      
+      for (let i = 1; i <= count; i++) {
+        video.currentTime = interval * i;
+        await new Promise(r => { video.onseeked = r; });
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx?.drawImage(video, 0, 0, canvas.width, canvas.height);
+        frames.push(canvas.toDataURL('image/jpeg', 0.8).split(',')[1]);
+      }
+      resolve(frames);
+    };
+
+    video.onerror = () => reject(new Error("Failed to load video for sampling."));
+  });
+};
+
+export const runAISelfReview = async (
+  frames: string[], 
+  context: { story: string; constraints: string; plan?: string }
+): Promise<SelfReviewRubric> => {
   const apiKey = getCurrentApiKey();
   const ai = new GoogleGenAI({ apiKey });
-  const historyContext = previousShots.map(s => `Shot ${s.id}: ${s.description}. Audio: ${s.audio}`).join("\n");
 
   const prompt = `
-    Director of Photography & Sound Designer Persona.
-    Outline: "${outline}" | Visual Style: "${style}" | Audio Style: "${audioStyle}"
-    Shot #${shotNumber} Planning.
+    Analyze the provided video frames from an AI-generated movie.
     
     Context:
-    ${historyContext || "Opening shot."}
+    Global Story Intent: ${context.story}
+    Visual Constraints: ${context.constraints}
+    ${context.plan ? `Shot Plan: ${context.plan}` : ''}
+
+    Evaluate based on the following rubric:
+    1. Narrative Consistency: Does the action match the intent?
+    2. Visual Fidelity: Does it adhere to the specified style?
+    3. Continuity: Are characters and environments consistent across frames?
+    4. Physics and Logic: Any obvious hallucinations or physics violations?
+
+    IMPORTANT: Suggest a Revised Video Prompt.
+    - Base revisions strictly on the observed failures in the video frames.
+    - Preserve original story intent and style constraints.
+    - Avoid adding new story elements unless required to fix a specific failure.
+    - Provide a list of specific changes made and regeneration hints.
+
+    Assign a score from 1 to 5 for each category and provide reasoning.
+    Also assign an overall confidence level (Low, Medium, High).
+    Be critical. AI self-review should identify failures to assist evaluation.
+  `;
+
+  const parts = frames.map(f => ({ inlineData: { mimeType: 'image/jpeg', data: f } }));
+  parts.push({ text: prompt } as any);
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: { parts: parts as any },
+    config: { 
+      responseMimeType: "application/json", 
+      responseSchema: RUBRIC_SCHEMA 
+    },
+  });
+
+  return JSON.parse(response.text || '{}');
+};
+
+const PLAN_ITEM_PROPS = {
+  narrativeIntent: { type: Type.STRING },
+  shotType: { type: Type.STRING },
+  cameraMovement: { type: Type.STRING },
+  cameraAngle: { type: Type.STRING },
+  lens: { type: Type.STRING },
+  framingSubject: { type: Type.STRING },
+  compositionNotes: { type: Type.STRING },
+  colorPalette: { type: Type.STRING },
+  vfxNotes: { type: Type.STRING },
+  soundBed: { type: Type.STRING },
+  musicCue: { type: Type.STRING },
+  sfx: { type: Type.ARRAY, items: { type: Type.STRING } },
+  dialogueStyle: { type: Type.STRING },
+  continuityLocks: { type: Type.ARRAY, items: { type: Type.STRING } },
+  keyProps: { type: Type.ARRAY, items: { type: Type.STRING } },
+  characterState: { type: Type.STRING },
+  mustInclude: { type: Type.ARRAY, items: { type: Type.STRING } },
+  mustAvoid: { type: Type.ARRAY, items: { type: Type.STRING } },
+  assumptions: { type: Type.ARRAY, items: { type: Type.STRING } },
+  action: { type: Type.STRING },
+  camera: { type: Type.STRING },
+  mood: { type: Type.STRING },
+  audioIntent: { type: Type.STRING },
+  dialogue: { type: Type.STRING },
+  videoPrompt: { type: Type.STRING },
+};
+
+const PLAN_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    shots: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: PLAN_ITEM_PROPS,
+        required: [
+          "narrativeIntent", "shotType", "cameraMovement", "cameraAngle", "lens", 
+          "framingSubject", "compositionNotes", "colorPalette", "vfxNotes",
+          "soundBed", "musicCue", "sfx", "dialogueStyle", "continuityLocks",
+          "keyProps", "characterState", "mustInclude", "mustAvoid",
+          "assumptions", "action", "camera", "mood", "audioIntent", "dialogue", "videoPrompt"
+        ]
+      }
+    }
+  },
+  required: ["shots"]
+};
+
+const SINGLE_PLAN_SCHEMA = {
+  type: Type.OBJECT,
+  properties: PLAN_ITEM_PROPS,
+  required: Object.keys(PLAN_ITEM_PROPS)
+};
+
+export const generateProjectPlan = async (outline: string, style: string, numShots: number): Promise<ShotPlan[]> => {
+  const apiKey = getCurrentApiKey();
+  const ai = new GoogleGenAI({ apiKey });
+  
+  const prompt = `
+    Create a detailed shot-by-shot movie plan for an 8-second story builder.
+    Story: ${outline}
+    Style: ${style}
+    Target Shots: ${numShots}
     
-    CRITICAL AUDIO RULE: You must describe how the audio FLOWS from the previous shot. 
-    Include ambient matching (same wind noise, same mechanical hum).
+    Each shot is exactly 8 seconds. 
+    You MUST provide detailed movie production controls for each shot including camera settings, sound design, and continuity locks.
+    Ensure strict adherence to JSON schema.
   `;
 
   const response = await ai.models.generateContent({
     model: "gemini-3-pro-preview",
     contents: prompt,
-    config: { responseMimeType: "application/json", responseSchema: SHOT_SCHEMA, thinkingConfig: { thinkingBudget: 2048 } },
+    config: { 
+      responseMimeType: "application/json", 
+      responseSchema: PLAN_SCHEMA,
+      thinkingConfig: { thinkingBudget: 4096 }
+    },
   });
 
-  return JSON.parse(response.text || "{}");
+  const parsed = JSON.parse(response.text || '{"shots":[]}');
+  return parsed.shots;
 };
 
-export const generateVideo = async (prompt: string, audioPrompt: string, startFrame?: string, referenceImages: AnnotatedImage[] = []): Promise<string> => {
-  let apiKey = getCurrentApiKey();
-  let ai = new GoogleGenAI({ apiKey });
+export const suggestNextShotPlan = async (outline: string, style: string, previousShots: Shot[]): Promise<ShotPlan> => {
+  const apiKey = getCurrentApiKey();
+  const ai = new GoogleGenAI({ apiKey });
+
+  const context = previousShots.map(s => `Shot ${s.index + 1}: ${s.plan.narrativeIntent}. Action: ${s.plan.action}`).join("\n");
   
-  let model = startFrame ? "veo-3.1-fast-generate-preview" : "veo-3.1-generate-preview";
-  let finalPrompt = `${prompt} \n\nAUDIO SYNC: ${audioPrompt}`;
+  const prompt = `
+    Suggest exactly ONE new 8-second ShotPlan that naturally continues the story.
+    Global Intent: ${outline}
+    Style constraints: ${style}
+    Context: ${context}
+    Output strict JSON matching the full ShotPlan production schema.
+  `;
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3-pro-preview",
+    contents: prompt,
+    config: { 
+      responseMimeType: "application/json", 
+      responseSchema: SINGLE_PLAN_SCHEMA,
+      thinkingConfig: { thinkingBudget: 2048 }
+    },
+  });
+
+  return JSON.parse(response.text || '{}');
+};
+
+export const generateVideoAttempt = async (
+  shotPlan: ShotPlan, 
+  options: { useSeed: boolean, useRefImage: boolean, requestExplanation: boolean },
+  previousVideoUrl?: string
+): Promise<Partial<GenerationAttempt>> => {
+  const apiKey = getCurrentApiKey();
+  const ai = new GoogleGenAI({ apiKey });
+  
+  const model = "veo-3.1-generate-preview";
+  let finalPrompt = shotPlan.videoPrompt;
+  
+  if (options.requestExplanation) {
+    finalPrompt += "\n\nProvide a technical explanation of your design choices and a self-assigned confidence level (Low/Medium/High).";
+  }
 
   try {
     const requestPayload: any = {
@@ -94,45 +267,33 @@ export const generateVideo = async (prompt: string, audioPrompt: string, startFr
       config: { numberOfVideos: 1, resolution: '720p', aspectRatio: '16:9' }
     };
 
-    if (startFrame) {
-      const { mimeType, imageBytes } = parseDataUrl(startFrame);
-      requestPayload.image = { imageBytes, mimeType };
-    } else if (referenceImages.length > 0) {
-      requestPayload.config.referenceImages = referenceImages.map(img => {
-        const { mimeType, imageBytes } = parseDataUrl(img.url);
-        return { image: { imageBytes, mimeType }, referenceType: 'ASSET' };
-      });
-    }
-
-    let operation: any = await retryWithBackoff(() => ai.models.generateVideos(requestPayload));
-
+    let operation: any = await ai.models.generateVideos(requestPayload);
     while (!operation.done) {
       await new Promise(resolve => setTimeout(resolve, 10000));
-      operation = await retryWithBackoff(() => ai.operations.getVideosOperation({ operation }));
+      operation = await ai.operations.getVideosOperation({ operation: operation });
     }
 
     const videoUri = operation.response?.generatedVideos?.[0]?.video?.uri;
     if (!videoUri) throw new Error("No video URI returned.");
 
-    apiKey = getCurrentApiKey();
-    const url = new URL(videoUri);
-    url.searchParams.set('key', apiKey);
-    const downloadUrl = url.toString();
-    
+    const downloadUrl = `${videoUri}&key=${apiKey}`;
     const response = await fetch(downloadUrl, { method: 'GET', mode: 'cors' });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      if (response.status === 400 && errorText.includes("API key not valid")) {
-        throw new Error("REAUTH_REQUIRED: Invalid API key.");
-      }
-      throw new Error(`Failed to download: ${response.status}`);
-    }
-
+    if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+    
     const blob = await response.blob();
-    return URL.createObjectURL(new Blob([blob], { type: 'video/mp4' }));
-  } catch (error) { 
-    console.error("[Veo] Error:", error);
-    throw error; 
+    return {
+      videoUrl: URL.createObjectURL(new Blob([blob], { type: 'video/mp4' })),
+      prompt: finalPrompt,
+      modelInfo: model,
+      metadata: { useSeed: options.useSeed, useRefImage: options.useRefImage }
+    };
+  } catch (error: any) {
+    console.error("[Veo] Attempt failed:", error);
+    return {
+      error: error.message || "Generation failed",
+      prompt: finalPrompt,
+      modelInfo: model,
+      metadata: { useSeed: options.useSeed, useRefImage: options.useRefImage }
+    };
   }
 };

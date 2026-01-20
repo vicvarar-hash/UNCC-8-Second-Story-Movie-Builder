@@ -1,3 +1,4 @@
+
 import React from 'react';
 
 export const Spinner: React.FC<{ size?: 'sm' | 'md' | 'lg', className?: string }> = ({ size = 'md', className = '' }) => {
