@@ -14,6 +14,16 @@ export const getCurrentApiKey = (): string => {
   return process.env.API_KEY || '';
 };
 
+/** Trust gate: fail fast before any AI call. Throws if API key is missing or invalid. */
+function validateApiKey(): void {
+  const key = getCurrentApiKey();
+  if (!key || key.length < 10) {
+    throw new Error(
+      "API key is required. Set GEMINI_API_KEY in localStorage or use the key selector in the app header."
+    );
+  }
+}
+
 const RUBRIC_SCHEMA = {
   type: Type.OBJECT,
   properties: {
@@ -91,6 +101,7 @@ export const runAISelfReview = async (
   frames: string[], 
   context: { story: string; constraints: string; plan?: string }
 ): Promise<SelfReviewRubric> => {
+  validateApiKey();
   const apiKey = getCurrentApiKey();
   const ai = new GoogleGenAI({ apiKey });
 
@@ -190,6 +201,7 @@ const SINGLE_PLAN_SCHEMA = {
 };
 
 export const generateProjectPlan = async (outline: string, style: string, numShots: number): Promise<ShotPlan[]> => {
+  validateApiKey();
   const apiKey = getCurrentApiKey();
   const ai = new GoogleGenAI({ apiKey });
   
@@ -219,6 +231,7 @@ export const generateProjectPlan = async (outline: string, style: string, numSho
 };
 
 export const suggestNextShotPlan = async (outline: string, style: string, previousShots: Shot[]): Promise<ShotPlan> => {
+  validateApiKey();
   const apiKey = getCurrentApiKey();
   const ai = new GoogleGenAI({ apiKey });
 
@@ -250,6 +263,7 @@ export const generateVideoAttempt = async (
   options: { useSeed: boolean, useRefImage: boolean, requestExplanation: boolean },
   previousVideoUrl?: string
 ): Promise<Partial<GenerationAttempt>> => {
+  validateApiKey();
   const apiKey = getCurrentApiKey();
   const ai = new GoogleGenAI({ apiKey });
   
