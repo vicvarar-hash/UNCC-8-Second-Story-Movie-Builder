@@ -29,7 +29,7 @@ const SCRIPTS = {
     numShots: 3,
     defaults: { useSeed: true, requestExplanation: false }
   },
-  "Script 2: Plausible Planning Errors": {
+  "Script 2: Plausible Planning": {
     outline: "Two old friends meet again after many years apart in a bustling train station. They embrace and walk together toward the platform.",
     style: "Stylized realism, warm sunlight, busy background, wide shots",
     numShots: 3,
