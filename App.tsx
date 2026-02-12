@@ -23,7 +23,7 @@ import {
 } from '@heroicons/react/24/solid';
 
 const SCRIPTS = {
-  "Script 1: Continuit Drift": {
+  "Script 1: Continuity Drift": {
     outline: "A lone woman walks slowly through a foggy forest at night. She wears a tattered red cloak. She picks up a glowing blue stone. Environment begins to shimmer.",
     style: "Cinematic, dark fantasy, foggy lighting, anamorphic lens, 24fps",
     numShots: 3,
