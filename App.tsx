@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { 
   generateProjectPlan, 
@@ -103,7 +102,7 @@ const App: React.FC = () => {
   };
 
   const handleResetProject = () => {
-    // Reset immediately as requested to avoid browser-blocking confirmation dialog issues
+    // Immediate reset without confirm() to avoid browser blockages
     const newProject: Project = {
       id: Math.random().toString(36).substr(2, 9),
       title: "New Evaluation Project",
@@ -207,12 +206,12 @@ const App: React.FC = () => {
     }
   };
 
-  const handleCopySuggestion = async (revisedPrompt: string) => {
+  const handleCopyPrompt = async (revisedPrompt: string) => {
     try {
       await navigator.clipboard.writeText(revisedPrompt);
-      alert("Prompt copied to clipboard! You can now paste it into the Technical Prompt area.");
+      alert("Revised prompt copied to clipboard! You can now paste it into the Active Technical Prompt area to regenerate.");
     } catch (err) {
-      alert("Failed to copy prompt.");
+      alert("Failed to copy prompt to clipboard.");
     }
   };
 
@@ -319,7 +318,7 @@ const App: React.FC = () => {
     }));
   };
 
-  const renderRubric = (rubric: SelfReviewRubric, shotId?: string) => (
+  const renderRubric = (rubric: SelfReviewRubric) => (
     <div className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {[
@@ -348,7 +347,7 @@ const App: React.FC = () => {
                  <span className="text-[10px] font-bold text-indigo-300 uppercase tracking-widest">Suggested Prompt Revision</span>
               </div>
               <button 
-                onClick={() => handleCopySuggestion(rubric.promptRevision!.revisedVideoPrompt)}
+                onClick={() => handleCopyPrompt(rubric.promptRevision!.revisedVideoPrompt)}
                 className="bg-indigo-600 hover:bg-indigo-500 text-[10px] font-bold px-3 py-1 rounded flex items-center gap-1 transition-all active:scale-95"
               >
                 <DocumentDuplicateIcon className="w-3 h-3" /> Copy Prompt
@@ -482,7 +481,7 @@ const App: React.FC = () => {
           <div className="flex items-center gap-4">
             <button 
               onClick={handleResetProject} 
-              className="flex items-center gap-2 bg-red-600/10 hover:bg-red-600/20 text-red-500 px-3 py-1.5 rounded-full border border-red-500/30 transition-all text-[10px] font-bold uppercase tracking-widest"
+              className="flex items-center gap-2 bg-red-600/10 hover:bg-red-600/20 text-red-500 px-3 py-1.5 rounded-full border border-red-500/30 transition-all text-[10px] font-bold uppercase tracking-widest active:scale-95"
               title="Reset Project and start from scratch"
             >
               <TrashIcon className="w-4 h-4" /> Reset Project
@@ -676,7 +675,7 @@ const App: React.FC = () => {
                               </div>
                             ) : (
                               <div className="space-y-4">
-                                {renderRubric(acceptedAttempt.selfReview, shot.id)}
+                                {renderRubric(acceptedAttempt.selfReview)}
                                 <button onClick={() => handleRunSelfReview(shot.id)} className="text-[10px] text-gray-500 hover:text-indigo-400 font-bold uppercase tracking-widest flex items-center gap-1 mx-auto transition-colors">
                                   <ArrowPathIcon className="w-3 h-3" /> Re-run Review
                                 </button>
