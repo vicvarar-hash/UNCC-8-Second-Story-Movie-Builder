@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { 
   generateProjectPlan, 
@@ -18,7 +19,8 @@ import {
   ArrowPathIcon, ExclamationTriangleIcon, ChevronDownIcon,
   ChevronUpIcon, CloudArrowUpIcon, IdentificationIcon,
   DocumentDuplicateIcon, PencilSquareIcon, AdjustmentsVerticalIcon,
-  EyeIcon, SpeakerWaveIcon, ShieldCheckIcon, TrashIcon
+  EyeIcon, SpeakerWaveIcon, ShieldCheckIcon, TrashIcon,
+  LockClosedIcon, LockOpenIcon
 } from '@heroicons/react/24/solid';
 
 const SCRIPTS = {
@@ -52,7 +54,7 @@ const App: React.FC = () => {
       createdAt: Date.now(),
       globalStoryPrompt: "",
       styleConstraints: "",
-      evaluationMode: true, // Always true
+      evaluationMode: true, 
       shots: [],
       runs: [],
       validationReviews: []
@@ -102,7 +104,6 @@ const App: React.FC = () => {
   };
 
   const handleResetProject = () => {
-    // Immediate reset without confirm() to avoid browser blockages
     const newProject: Project = {
       id: Math.random().toString(36).substr(2, 9),
       title: "New Evaluation Project",
@@ -162,9 +163,50 @@ const App: React.FC = () => {
     }
   };
 
-  const handleGenerateShot = async (shotId: string, promptSource: GenerationAttempt['promptSource'] = 'original', parentAttemptId?: string, forcePrompt?: string) => {
+  const handleAcceptShotState = (shotId: string, attemptId?: string) => {
     const shot = project.shots.find(s => s.id === shotId);
     if (!shot) return;
+
+    if (!attemptId && shot.attempts.length === 0) {
+      // First acceptance: Accept the plan to allow first generation
+      const planAttempt: GenerationAttempt = {
+        id: `plan-${Math.random().toString(36).substr(2, 5)}`,
+        timestamp: Date.now(),
+        prompt: shot.plan.videoPrompt,
+        modelInfo: "planning-gate",
+        promptSource: 'original',
+        metadata: { useSeed: false, useRefImage: false }
+      };
+      
+      setProject(prev => ({
+        ...prev,
+        shots: prev.shots.map(s => s.id === shotId ? {
+          ...s,
+          attempts: [planAttempt],
+          acceptedAttemptId: planAttempt.id
+        } : s)
+      }));
+    } else if (attemptId) {
+      // Accept a specific generated attempt
+      setProject(prev => ({
+        ...prev,
+        shots: prev.shots.map(s => s.id === shotId ? {
+          ...s,
+          acceptedAttemptId: attemptId
+        } : s)
+      }));
+    }
+  };
+
+  const handleGenerateShot = async (shotId: string) => {
+    const shot = project.shots.find(s => s.id === shotId);
+    if (!shot) return;
+
+    // HARD ACCEPTANCE GATE: Block generation if not explicitly accepted by user
+    if (!shot.acceptedAttemptId) {
+      alert("PRODUCTION BLOCKED: You must explicitly 'Accept' the current plan or a previous version before generating video. This ensures human intent is logged in the evidence trace.");
+      return;
+    }
 
     setProject(prev => ({
       ...prev,
@@ -172,20 +214,20 @@ const App: React.FC = () => {
     }));
 
     try {
-      const planToUse = forcePrompt ? { ...shot.plan, videoPrompt: forcePrompt } : shot.plan;
-      const attemptData = await generateVideoAttempt(planToUse, { 
+      // Always use the prompt from the plan (which is editable in the UI)
+      const attemptData = await generateVideoAttempt(shot.plan, { 
         useSeed: true, useRefImage: false, requestExplanation: true 
       });
       
       const newAttempt: GenerationAttempt = {
         id: Math.random().toString(36).substr(2, 9),
         timestamp: Date.now(),
-        prompt: planToUse.videoPrompt,
+        prompt: shot.plan.videoPrompt,
         videoUrl: attemptData.videoUrl,
         error: attemptData.error,
         modelInfo: attemptData.modelInfo || "unknown",
-        promptSource,
-        parentAttemptId,
+        promptSource: 'manual_edit',
+        parentAttemptId: shot.acceptedAttemptId,
         metadata: attemptData.metadata || { useSeed: false, useRefImage: false }
       };
 
@@ -195,7 +237,9 @@ const App: React.FC = () => {
           ...s, 
           attempts: [...s.attempts, newAttempt],
           status: 'completed',
-          acceptedAttemptId: attemptData.videoUrl ? newAttempt.id : s.acceptedAttemptId
+          // Note: We do NOT auto-accept the new generation. 
+          // User must see it and click "Accept" to allow the NEXT regeneration.
+          acceptedAttemptId: null 
         } : s)
       }));
     } catch (e: any) {
@@ -209,15 +253,16 @@ const App: React.FC = () => {
   const handleCopyPrompt = async (revisedPrompt: string) => {
     try {
       await navigator.clipboard.writeText(revisedPrompt);
-      alert("Revised prompt copied to clipboard! You can now paste it into the Active Technical Prompt area to regenerate.");
+      alert("Revised prompt copied to clipboard! Paste it into the Technical Prompt area.");
     } catch (err) {
-      alert("Failed to copy prompt to clipboard.");
+      alert("Failed to copy prompt.");
     }
   };
 
   const handleRunSelfReview = async (shotId: string) => {
     const shot = project.shots.find(s => s.id === shotId);
-    const attempt = shot?.attempts.find(a => a.id === shot.acceptedAttemptId);
+    // Use the most recent attempt for self-review
+    const attempt = shot?.attempts[shot.attempts.length - 1];
     if (!attempt?.videoUrl) return;
 
     setRenderProgress("Running AI Self-Review...");
@@ -233,7 +278,7 @@ const App: React.FC = () => {
         ...prev,
         shots: prev.shots.map(s => s.id === shotId ? {
           ...s,
-          attempts: s.attempts.map(a => a.id === shot.acceptedAttemptId ? { ...a, selfReview: result } : a)
+          attempts: s.attempts.map(a => a.id === attempt.id ? { ...a, selfReview: result } : a)
         } : s)
       }));
     } catch (e: any) {
@@ -248,7 +293,9 @@ const App: React.FC = () => {
       ...prev,
       shots: prev.shots.map(s => s.id === shotId ? {
         ...s,
-        plan: { ...s.plan, [field]: value }
+        plan: { ...s.plan, [field]: value },
+        // IMPORTANT: Edit invalidates acceptance
+        acceptedAttemptId: null 
       } : s)
     }));
   };
@@ -392,56 +439,31 @@ const App: React.FC = () => {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-[10px] font-bold text-gray-500 uppercase">Shot Type</label>
-                <input value={shot.plan.shotType} onChange={e => updateShotPlanField(shot.id, 'shotType', e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded p-2 text-sm mt-1" placeholder="CU, WS, etc." />
+                <input value={shot.plan.shotType} onChange={e => updateShotPlanField(shot.id, 'shotType', e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded p-2 text-sm mt-1" />
               </div>
               <div>
                 <label className="text-[10px] font-bold text-gray-500 uppercase">Movement</label>
-                <input value={shot.plan.cameraMovement} onChange={e => updateShotPlanField(shot.id, 'cameraMovement', e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded p-2 text-sm mt-1" placeholder="Dolly, Pan, Static..." />
+                <input value={shot.plan.cameraMovement} onChange={e => updateShotPlanField(shot.id, 'cameraMovement', e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded p-2 text-sm mt-1" />
               </div>
               <div>
                 <label className="text-[10px] font-bold text-gray-500 uppercase">Lens</label>
-                <input value={shot.plan.lens} onChange={e => updateShotPlanField(shot.id, 'lens', e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded p-2 text-sm mt-1" placeholder="35mm Anamorphic..." />
+                <input value={shot.plan.lens} onChange={e => updateShotPlanField(shot.id, 'lens', e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded p-2 text-sm mt-1" />
               </div>
               <div>
                 <label className="text-[10px] font-bold text-gray-500 uppercase">Color Palette</label>
-                <input value={shot.plan.colorPalette} onChange={e => updateShotPlanField(shot.id, 'colorPalette', e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded p-2 text-sm mt-1" placeholder="Teal/Orange, Noir..." />
+                <input value={shot.plan.colorPalette} onChange={e => updateShotPlanField(shot.id, 'colorPalette', e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded p-2 text-sm mt-1" />
               </div>
             </div>
             <div>
               <label className="text-[10px] font-bold text-gray-500 uppercase">Composition Notes</label>
-              <textarea value={shot.plan.compositionNotes} onChange={e => updateShotPlanField(shot.id, 'compositionNotes', e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded p-2 text-sm mt-1 h-16" placeholder="Rule of thirds, leading lines..." />
+              <textarea value={shot.plan.compositionNotes} onChange={e => updateShotPlanField(shot.id, 'compositionNotes', e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded p-2 text-sm mt-1 h-16" />
             </div>
           </section>
 
-          <section className="space-y-4">
-            <h3 className="text-xs font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-2">
-              <SpeakerWaveIcon className="w-4 h-4" /> Sound Design
-            </h3>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="text-[10px] font-bold text-gray-500 uppercase">Music Cue</label>
-                <input value={shot.plan.musicCue} onChange={e => updateShotPlanField(shot.id, 'musicCue', e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded p-2 text-sm mt-1" />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-gray-500 uppercase">Dialogue Style</label>
-                <input value={shot.plan.dialogueStyle} onChange={e => updateShotPlanField(shot.id, 'dialogueStyle', e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded p-2 text-sm mt-1" />
-              </div>
-            </div>
-          </section>
-
-          <section className="space-y-4">
-            <h3 className="text-xs font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-2">
-              <ShieldCheckIcon className="w-4 h-4" /> Continuity & Constraints
-            </h3>
-            <div className="space-y-4">
-              <div>
-                <label className="text-[10px] font-bold text-gray-500 uppercase">Continuity Locks (comma separated)</label>
-                <input value={shot.plan.continuityLocks.join(', ')} onChange={e => updateShotPlanField(shot.id, 'continuityLocks', e.target.value.split(',').map(s => s.trim()))} className="w-full bg-gray-800 border border-gray-700 rounded p-2 text-sm mt-1" />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-gray-500 uppercase">Must Include</label>
-                <input value={shot.plan.mustInclude.join(', ')} onChange={e => updateShotPlanField(shot.id, 'mustInclude', e.target.value.split(',').map(s => s.trim()))} className="w-full bg-gray-800 border border-gray-700 rounded p-2 text-sm mt-1" />
-              </div>
+          <section className="space-y-4 border-t border-gray-800 pt-6">
+            <div className="bg-amber-900/10 border border-amber-500/20 p-4 rounded-xl flex gap-3">
+              <InformationCircleIcon className="w-5 h-5 text-amber-500 shrink-0" />
+              <p className="text-[10px] text-amber-200 uppercase font-bold leading-tight">Editing these fields invalidates previous acceptance. You must re-sign the production gate before regenerating.</p>
             </div>
           </section>
 
@@ -482,7 +504,6 @@ const App: React.FC = () => {
             <button 
               onClick={handleResetProject} 
               className="flex items-center gap-2 bg-red-600/10 hover:bg-red-600/20 text-red-500 px-3 py-1.5 rounded-full border border-red-500/30 transition-all text-[10px] font-bold uppercase tracking-widest active:scale-95"
-              title="Reset Project and start from scratch"
             >
               <TrashIcon className="w-4 h-4" /> Reset Project
             </button>
@@ -543,11 +564,6 @@ const App: React.FC = () => {
                    <div className="flex justify-between items-center">
                       <div className="flex items-center gap-3">
                         <span className="text-xs font-bold text-indigo-500 uppercase tracking-widest">Shot {idx + 1}</span>
-                        {shot.plan.continuityLocks.length > 0 && (
-                          <span className="flex items-center gap-1 text-[9px] bg-indigo-900/30 text-indigo-400 px-2 py-0.5 rounded border border-indigo-500/20 font-bold uppercase">
-                            <ShieldCheckIcon className="w-3 h-3" /> {shot.plan.continuityLocks.length} Locks
-                          </span>
-                        )}
                       </div>
                       <div className="flex items-center gap-2">
                         <button onClick={() => setEditingShotId(shot.id)} className="p-2 text-gray-500 hover:text-indigo-400 transition-colors bg-gray-800 rounded-lg">
@@ -565,20 +581,7 @@ const App: React.FC = () => {
                         <div className="flex flex-wrap gap-2">
                           <span className="text-[10px] bg-gray-800 text-gray-400 px-2 py-0.5 rounded border border-gray-700 font-bold">{shot.plan.shotType}</span>
                           <span className="text-[10px] bg-gray-800 text-gray-400 px-2 py-0.5 rounded border border-gray-700 font-bold">{shot.plan.cameraMovement}</span>
-                          <span className="text-[10px] bg-gray-800 text-gray-400 px-2 py-0.5 rounded border border-gray-700 font-bold">{shot.plan.lens}</span>
                         </div>
-                      </div>
-                      
-                      <div className="col-span-1 bg-gray-950 p-3 rounded-xl border border-gray-800">
-                        <span className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Checklist</span>
-                        <ul className="text-[9px] space-y-1 text-gray-400">
-                          {shot.plan.mustInclude.slice(0, 3).map((item, i) => (
-                            <li key={i} className="flex items-center gap-1"><CheckCircleIcon className="w-3 h-3 text-green-500" /> {item}</li>
-                          ))}
-                          {shot.plan.continuityLocks.slice(0, 2).map((item, i) => (
-                            <li key={i} className="flex items-center gap-1"><ShieldCheckIcon className="w-3 h-3 text-indigo-500" /> {item}</li>
-                          ))}
-                        </ul>
                       </div>
                    </div>
                 </div>
@@ -591,49 +594,84 @@ const App: React.FC = () => {
           <div className="space-y-12">
             {project.shots.map(shot => {
               const acceptedAttempt = shot.attempts.find(a => a.id === shot.acceptedAttemptId);
+              const isAccepted = !!shot.acceptedAttemptId;
+
               return (
                 <div key={shot.id} className="bg-gray-900 rounded-3xl border border-gray-800 overflow-hidden shadow-2xl transition-all">
                   <div className="bg-gray-800/50 px-6 py-4 border-b border-gray-800 flex justify-between items-center">
                     <div className="flex items-center gap-3">
                       <span className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold">{shot.index + 1}</span>
                       <h3 className="font-bold text-gray-100">{shot.plan.narrativeIntent}</h3>
+                      <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-bold uppercase tracking-widest border transition-all ${isAccepted ? 'bg-green-900/20 text-green-400 border-green-500/50' : 'bg-red-900/20 text-red-400 border-red-500/50'}`}>
+                        {isAccepted ? <><CheckCircleIcon className="w-3 h-3" /> Accepted</> : <><ExclamationTriangleIcon className="w-3 h-3" /> Not Accepted</>}
+                      </div>
                     </div>
-                    <button 
-                      onClick={() => handleGenerateShot(shot.id, 'manual_edit', acceptedAttempt?.id, shot.plan.videoPrompt)} 
-                      disabled={shot.status === 'generating'} 
-                      className="bg-indigo-600 hover:bg-indigo-500 text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-2 transition-all shadow-lg active:scale-95"
-                    >
-                      {shot.status === 'generating' ? <Spinner size="sm" /> : <VideoCameraIcon className="w-4 h-4" />}
-                      {shot.attempts.length > 0 ? "Regenerate" : "Generate"}
-                    </button>
+                    <div className="flex items-center gap-3">
+                       {!isAccepted && (
+                         <span className="text-[9px] font-bold text-red-500 animate-pulse uppercase">Production Blocked</span>
+                       )}
+                       <button 
+                        onClick={() => handleGenerateShot(shot.id)} 
+                        disabled={shot.status === 'generating' || !isAccepted} 
+                        className={`text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-2 transition-all shadow-lg active:scale-95 ${!isAccepted ? 'bg-gray-800 text-gray-600 cursor-not-allowed opacity-50' : 'bg-indigo-600 hover:bg-indigo-500 text-white'}`}
+                      >
+                        {shot.status === 'generating' ? <Spinner size="sm" /> : <VideoCameraIcon className="w-4 h-4" />}
+                        {shot.attempts.length > 1 ? "Regenerate" : "Generate"}
+                      </button>
+                    </div>
                   </div>
                   
                   <div className="grid grid-cols-1 lg:grid-cols-2">
                     <div className="p-6 border-r border-gray-800 space-y-6 bg-gray-900/50">
                       <div id={`prompt-area-${shot.id}`} className="bg-gray-950 p-4 rounded-xl border border-gray-800 transition-all duration-500 group focus-within:border-indigo-500 focus-within:bg-indigo-900/5">
-                        <label className="text-[10px] font-bold text-gray-500 uppercase block mb-2 group-focus-within:text-indigo-400 transition-colors">Active Technical Prompt (Editable)</label>
+                        <div className="flex justify-between items-center mb-2">
+                           <label className="text-[10px] font-bold text-gray-500 uppercase group-focus-within:text-indigo-400 transition-colors">Active Technical Prompt</label>
+                           <button onClick={() => setEditingShotId(shot.id)} className="text-[9px] font-bold text-indigo-400 hover:text-white flex items-center gap-1 uppercase">
+                              <AdjustmentsVerticalIcon className="w-3 h-3" /> Production Settings
+                           </button>
+                        </div>
                         <textarea 
                           value={shot.plan.videoPrompt}
                           onChange={e => updateShotPlanField(shot.id, 'videoPrompt', e.target.value)}
                           className="w-full bg-transparent text-[11px] text-gray-200 font-mono leading-relaxed outline-none border-none resize-none h-32 focus:ring-0 custom-scrollbar"
                           spellCheck={false}
-                          placeholder="Type or paste a suggestion to refine this prompt..."
                         />
                       </div>
-                      
-                      <div className="grid grid-cols-3 gap-3">
-                        <div className="bg-gray-800/30 p-2 rounded border border-gray-700">
-                          <span className="text-[9px] font-bold text-gray-500 uppercase block">Shot</span>
-                          <span className="text-xs text-gray-300 font-bold">{shot.plan.shotType}</span>
+
+                      {/* Acceptance Gate UI Section */}
+                      <div className="bg-black/40 border border-gray-800 p-6 rounded-2xl space-y-4">
+                        <div className="flex items-center gap-2 mb-2">
+                           <LockClosedIcon className={`w-4 h-4 ${isAccepted ? 'text-green-500' : 'text-gray-600'}`} />
+                           <h4 className="text-xs font-bold text-gray-300 uppercase tracking-widest">Acceptance Gate</h4>
                         </div>
-                        <div className="bg-gray-800/30 p-2 rounded border border-gray-700">
-                          <span className="text-[9px] font-bold text-gray-500 uppercase block">Camera</span>
-                          <span className="text-xs text-gray-300 font-bold">{shot.plan.cameraMovement}</span>
-                        </div>
-                        <div className="bg-gray-800/30 p-2 rounded border border-gray-700">
-                          <span className="text-[9px] font-bold text-gray-500 uppercase block">Lens</span>
-                          <span className="text-xs text-gray-300 font-bold">{shot.plan.lens}</span>
-                        </div>
+                        
+                        {!isAccepted ? (
+                          <div className="space-y-3">
+                            <p className="text-[10px] text-gray-400 leading-relaxed italic">The production gate is currently locked. To proceed with generation, you must explicitly accept the current configuration as the intended narrative baseline.</p>
+                            <button 
+                              onClick={() => handleAcceptShotState(shot.id)}
+                              className="w-full bg-indigo-900/30 hover:bg-indigo-600 text-indigo-400 hover:text-white border border-indigo-500/50 py-3 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                            >
+                              <ShieldCheckIcon className="w-4 h-4" /> Accept Plan for Production
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                             <div className="bg-green-900/10 border border-green-500/20 p-3 rounded-lg flex items-start gap-3">
+                                <CheckCircleIcon className="w-4 h-4 text-green-500 shrink-0 mt-0.5" />
+                                <div>
+                                   <p className="text-[10px] font-bold text-green-400 uppercase">Configuration Accepted</p>
+                                   <p className="text-[9px] text-green-600/70 mt-0.5 font-mono">ID: {shot.acceptedAttemptId}</p>
+                                </div>
+                             </div>
+                             <button 
+                              onClick={() => setProject(prev => ({ ...prev, shots: prev.shots.map(s => s.id === shot.id ? { ...s, acceptedAttemptId: null } : s) }))}
+                              className="text-[9px] font-bold text-gray-600 hover:text-red-500 uppercase tracking-widest"
+                            >
+                              Revoke Acceptance
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                     
@@ -641,16 +679,21 @@ const App: React.FC = () => {
                       {shot.status === 'generating' ? (
                         <div className="flex flex-col items-center gap-3">
                           <Spinner size="lg" className="text-indigo-500" />
-                          <p className="text-[10px] font-bold text-gray-600 animate-pulse tracking-widest">VEO GENERATION ACTIVE</p>
+                          <p className="text-[10px] font-bold text-gray-600 animate-pulse tracking-widest uppercase">VEO Gen Active</p>
                         </div>
-                      ) : (shot.attempts.length > 0 && acceptedAttempt?.videoUrl) ? (
+                      ) : (shot.attempts.length > 0 && shot.attempts[shot.attempts.length-1].videoUrl) ? (
                         <video 
-                          key={acceptedAttempt.id} 
-                          src={acceptedAttempt.videoUrl} 
+                          key={shot.attempts[shot.attempts.length-1].id} 
+                          src={shot.attempts[shot.attempts.length-1].videoUrl} 
                           controls 
                           className="w-full h-full object-contain bg-black" 
                         />
-                      ) : <FilmIcon className="w-12 h-12 opacity-10" />}
+                      ) : (
+                        <div className="flex flex-col items-center gap-3 opacity-20">
+                           <FilmIcon className="w-16 h-16" />
+                           <p className="text-xs font-bold uppercase tracking-widest">No Artifact Generated</p>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -661,23 +704,23 @@ const App: React.FC = () => {
                     <div className="max-w-4xl mx-auto space-y-4">
                       <div className="flex items-center gap-2">
                         <SparklesIcon className="w-4 h-4 text-indigo-400" />
-                        <h4 className="text-xs font-bold text-indigo-300 uppercase tracking-widest">Optional AI Self-Review</h4>
+                        <h4 className="text-xs font-bold text-indigo-300 uppercase tracking-widest">AI Trace Analysis</h4>
                       </div>
                       <div className="bg-gray-900/50 rounded-2xl border border-indigo-500/10 p-6 shadow-inner">
-                        {acceptedAttempt?.videoUrl ? (
+                        {(shot.attempts.length > 0 && shot.attempts[shot.attempts.length-1].videoUrl) ? (
                           <>
-                            {!acceptedAttempt.selfReview ? (
+                            {!shot.attempts[shot.attempts.length-1].selfReview ? (
                               <div className="text-center py-4">
                                 <button onClick={() => handleRunSelfReview(shot.id)} className="bg-indigo-600 hover:bg-indigo-500 text-xs font-bold px-6 py-2 rounded-full transition-all flex items-center gap-2 mx-auto shadow-lg shadow-indigo-600/20 active:scale-95">
-                                  <ArrowPathIcon className="w-4 h-4" /> Run Self-Review
+                                  <ArrowPathIcon className="w-4 h-4" /> Analyze Latest Version
                                 </button>
-                                <p className="text-[9px] text-gray-500 mt-2 uppercase tracking-tight">AI self-review identifies drift & suggests improvements</p>
+                                <p className="text-[9px] text-gray-500 mt-2 uppercase tracking-tight">AI self-review identifies drift & suggests technical improvements</p>
                               </div>
                             ) : (
                               <div className="space-y-4">
-                                {renderRubric(acceptedAttempt.selfReview)}
+                                {renderRubric(shot.attempts[shot.attempts.length-1].selfReview!)}
                                 <button onClick={() => handleRunSelfReview(shot.id)} className="text-[10px] text-gray-500 hover:text-indigo-400 font-bold uppercase tracking-widest flex items-center gap-1 mx-auto transition-colors">
-                                  <ArrowPathIcon className="w-3 h-3" /> Re-run Review
+                                  <ArrowPathIcon className="w-3 h-3" /> Re-Analyze
                                 </button>
                               </div>
                             )}
@@ -685,7 +728,7 @@ const App: React.FC = () => {
                         ) : (
                           <div className="text-center py-10 opacity-50">
                             <ExclamationTriangleIcon className="w-8 h-8 text-gray-700 mx-auto mb-2" />
-                            <p className="text-xs font-bold text-gray-600">No video artifact available for review.</p>
+                            <p className="text-xs font-bold text-gray-600 uppercase">Artifact Required for Analysis</p>
                           </div>
                         )}
                       </div>
@@ -695,7 +738,7 @@ const App: React.FC = () => {
                     <div className="max-w-4xl mx-auto space-y-4">
                       <div className="flex items-center gap-2">
                         <BeakerIcon className="w-4 h-4 text-indigo-400" />
-                        <h4 className="text-xs font-bold text-indigo-300 uppercase tracking-widest">Outcome Coding (Evidence)</h4>
+                        <h4 className="text-xs font-bold text-indigo-300 uppercase tracking-widest">Trust Calibration (Human)</h4>
                       </div>
                       <div className="bg-gray-900/50 rounded-2xl border border-indigo-500/10 p-6">
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -719,35 +762,49 @@ const App: React.FC = () => {
                           value={shot.outcome?.notes || ''}
                           onChange={e => updateOutcome(shot.id, { notes: e.target.value })}
                           className="w-full mt-4 bg-gray-800 border border-gray-700 rounded-xl p-3 text-xs h-20 outline-none focus:ring-1 focus:ring-indigo-500 transition-all" 
-                          placeholder="Human observation notes (Required for Research Evaluation)..."
+                          placeholder="Evidence logs (Critical for Trust Lab)..."
                         />
                       </div>
                     </div>
 
                     {/* Attempts Trace Log */}
                     <div className="max-w-4xl mx-auto pt-4 border-t border-indigo-500/10">
-                       <span className="text-[9px] font-bold text-gray-600 uppercase tracking-widest block mb-3">Attempt Lineage History ({shot.attempts.length})</span>
-                       <div className="flex gap-2 overflow-x-auto pb-4 scrollbar-hide">
+                       <span className="text-[9px] font-bold text-gray-600 uppercase tracking-widest block mb-3">Lineage History ({shot.attempts.length})</span>
+                       <div className="flex gap-4 overflow-x-auto pb-6 scrollbar-hide">
                           {shot.attempts.map((att, i) => (
-                            <button 
-                              key={att.id} 
-                              onClick={() => setProject(prev => ({ 
-                                ...prev, 
-                                shots: prev.shots.map(s => s.id === shot.id ? { 
-                                  ...s, 
-                                  acceptedAttemptId: att.id 
-                                } : s) 
-                              }))} 
-                              className={`flex-shrink-0 w-32 bg-gray-800 p-2 rounded-lg border transition-all ${shot.acceptedAttemptId === att.id ? 'border-indigo-500 bg-indigo-900/20 ring-1 ring-indigo-500/50 scale-105' : 'border-gray-700 opacity-60 hover:opacity-100 hover:scale-105'}`}
-                            >
-                               <div className="flex justify-between items-center mb-1">
-                                  <span className="text-[9px] font-bold text-gray-400">V{i + 1}</span>
-                                  <span className="text-[8px] font-bold px-1 rounded bg-gray-900 text-gray-500 uppercase">{att.promptSource || 'orig'}</span>
-                               </div>
-                               <div className="h-10 bg-black rounded flex items-center justify-center overflow-hidden">
-                                  {att.error ? <XCircleIcon className="w-5 h-5 text-red-600" /> : <FilmIcon className="w-5 h-5 text-gray-600" />}
-                               </div>
-                            </button>
+                            <div key={att.id} className="flex-shrink-0 flex flex-col gap-2">
+                               <button 
+                                onClick={() => setProject(prev => ({ 
+                                  ...prev, 
+                                  shots: prev.shots.map(s => s.id === shot.id ? { 
+                                    ...s, 
+                                    acceptedAttemptId: att.id 
+                                  } : s) 
+                                }))} 
+                                className={`w-36 bg-gray-800 p-2 rounded-lg border transition-all ${shot.acceptedAttemptId === att.id ? 'border-indigo-500 bg-indigo-900/20 ring-1 ring-indigo-500/50 scale-105' : 'border-gray-700 opacity-60 hover:opacity-100 hover:scale-105'}`}
+                              >
+                                <div className="flex justify-between items-center mb-1">
+                                    <span className="text-[9px] font-bold text-gray-400">V{i + 1}</span>
+                                    <span className="text-[8px] font-bold px-1 rounded bg-gray-900 text-gray-500 uppercase">{att.id.includes('plan') ? 'plan' : 'vid'}</span>
+                                </div>
+                                <div className="h-14 bg-black rounded flex items-center justify-center overflow-hidden">
+                                    {att.videoUrl ? <video src={att.videoUrl} className="w-full h-full object-cover" /> : <IdentificationIcon className="w-6 h-6 text-gray-800" />}
+                                </div>
+                                <div className="mt-2 text-center">
+                                  <span className={`text-[8px] font-bold uppercase tracking-tighter ${shot.acceptedAttemptId === att.id ? 'text-indigo-400' : 'text-gray-600'}`}>
+                                    {shot.acceptedAttemptId === att.id ? 'Accepted Baseline' : 'Version History'}
+                                  </span>
+                                </div>
+                              </button>
+                              {shot.acceptedAttemptId !== att.id && (
+                                <button 
+                                  onClick={() => handleAcceptShotState(shot.id, att.id)}
+                                  className="text-[8px] font-bold text-indigo-400 hover:text-white uppercase tracking-widest bg-indigo-900/10 py-1 rounded border border-indigo-500/10"
+                                >
+                                  Accept This Version
+                                </button>
+                              )}
+                            </div>
                           ))}
                        </div>
                     </div>
@@ -764,7 +821,7 @@ const App: React.FC = () => {
               <div className="bg-gray-800/50 p-1 flex">
                 {['clip', 'movie'].map(t => (
                   <button key={t} onClick={() => setValidationTab(t as any)} className={`flex-1 py-3 text-xs font-bold rounded-2xl transition-all ${validationTab === t ? 'bg-indigo-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}>
-                    Validate {t === 'clip' ? 'a Shot Clip' : 'Full Movie'}
+                    Validate {t === 'clip' ? 'Shot' : 'Movie'}
                   </button>
                 ))}
               </div>
@@ -777,15 +834,13 @@ const App: React.FC = () => {
                       {validationFile ? (
                         <><CheckCircleIcon className="w-10 h-10 text-green-500 mb-2" /><p className="text-sm font-bold text-gray-200">{validationFile.name}</p></>
                       ) : (
-                        <><CloudArrowUpIcon className="w-10 h-10 text-gray-700 group-hover:text-indigo-500 mb-2 transition-colors" /><p className="text-xs font-bold text-gray-400">Click or drag mp4/webm</p></>
+                        <><CloudArrowUpIcon className="w-10 h-10 text-gray-700 group-hover:text-indigo-500 mb-2 transition-colors" /><p className="text-xs font-bold text-gray-400 uppercase">Drop mp4/webm</p></>
                       )}
                     </div>
                   </div>
-                  <textarea value={validationContext.story} onChange={(e) => setValidationContext(v => ({ ...v, story: e.target.value }))} className="w-full bg-gray-800 border border-gray-700 rounded-xl p-3 text-xs h-20 outline-none" placeholder="Story Intent..." />
                   <button onClick={handleRunValidationReview} disabled={!validationFile} className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 py-4 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg shadow-indigo-600/20 active:scale-95">
-                    <SparklesIcon className="w-5 h-5" /> Run Validation Review
+                    <SparklesIcon className="w-5 h-5" /> Run Validator
                   </button>
-                  <p className="text-[10px] text-gray-500 text-center italic uppercase">AI Self-Review is fallible research evidence.</p>
                 </div>
 
                 <div className="space-y-6 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
@@ -812,7 +867,7 @@ const App: React.FC = () => {
                 </div>
                 <div>
                   <h2 className="text-2xl font-bold">Export Evidence Bundle</h2>
-                  <p className="text-gray-500 text-sm mt-2">Download full project trace: plans, attempts, lineage, human outcomes, and AI self-reviews.</p>
+                  <p className="text-gray-500 text-sm mt-2">Bundle includes all versions, plan drafts, AI reviews, and human outcome logs for research audit.</p>
                 </div>
                 <button onClick={exportBundle} className="w-full bg-indigo-600 hover:bg-indigo-500 py-4 rounded-2xl font-bold text-lg flex items-center justify-center gap-3 transition-all shadow-xl shadow-indigo-600/20 active:scale-95">
                   <ArrowDownTrayIcon className="w-6 h-6" /> Download Bundle (.json)
