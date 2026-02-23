@@ -23,6 +23,10 @@ function validateApiKey(): void {
   }
 }
 
+export const __VALIDATION_ONLY_REMOVE_ME__ = (): void => {
+  validateApiKey();
+};
+
 const RUBRIC_SCHEMA = {
   type: Type.OBJECT,
   properties: {
