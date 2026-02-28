@@ -102,7 +102,12 @@ export const sampleFrames = async (videoSrc: string | File, count: number = 3): 
 
 export const runAISelfReview = async (
   frames: string[], 
-  context: { story: string; constraints: string; plan?: string }
+  context: { 
+    story: string; 
+    constraints: string; 
+    plan?: string;
+    referenceImages?: { url: string; label: string }[]
+  }
 ): Promise<SelfReviewRubric> => {
   validateApiKey();
   const apiKey = getCurrentApiKey();
@@ -119,7 +124,7 @@ export const runAISelfReview = async (
     Evaluate based on the following rubric:
     1. Narrative Consistency: Does the action match the intent?
     2. Visual Fidelity: Does it adhere to the specified style?
-    3. Continuity: Are characters and environments consistent across frames?
+    3. Continuity: Are characters and environments consistent across frames and with any provided reference images?
     4. Physics and Logic: Any obvious hallucinations or physics violations?
 
     IMPORTANT: Suggest a Revised Video Prompt.
@@ -133,8 +138,23 @@ export const runAISelfReview = async (
     Be critical. AI self-review should identify failures to assist evaluation.
   `;
 
-  const parts = frames.map(f => ({ inlineData: { mimeType: 'image/jpeg', data: f } }));
-  parts.push({ text: prompt } as any);
+  const parts: any[] = frames.map(f => ({ inlineData: { mimeType: 'image/jpeg', data: f } }));
+  
+  if (context.referenceImages) {
+    for (const img of context.referenceImages) {
+      if (img.url.startsWith('data:')) {
+        const [mime, data] = img.url.split(';base64,');
+        parts.push({
+          inlineData: {
+            mimeType: mime.split(':')[1],
+            data: data
+          }
+        });
+      }
+    }
+  }
+
+  parts.push({ text: prompt });
 
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
@@ -203,7 +223,14 @@ const SINGLE_PLAN_SCHEMA = {
   required: Object.keys(PLAN_ITEM_PROPS)
 };
 
-export const generateProjectPlan = async (outline: string, style: string, numShots: number): Promise<ShotPlan[]> => {
+export const generateProjectPlan = async (
+  outline: string, 
+  style: string, 
+  audioIntent: string,
+  contentConstraints: string,
+  referenceImages: { url: string; label: string }[],
+  numShots: number
+): Promise<ShotPlan[]> => {
   validateApiKey();
   const apiKey = getCurrentApiKey();
   const ai = new GoogleGenAI({ apiKey });
@@ -212,6 +239,8 @@ export const generateProjectPlan = async (outline: string, style: string, numSho
     Create a detailed shot-by-shot movie plan for an 8-second story builder.
     Story: ${outline}
     Style: ${style}
+    Audio Intent: ${audioIntent}
+    Content Constraints: ${contentConstraints}
     Target Shots: ${numShots}
     
     Each shot is exactly 8 seconds. 
@@ -219,21 +248,41 @@ export const generateProjectPlan = async (outline: string, style: string, numSho
     Ensure strict adherence to JSON schema.
   `;
 
+  const parts: any[] = [{ text: prompt }];
+  
+  for (const img of referenceImages) {
+    if (img.url.startsWith('data:')) {
+      const [mime, data] = img.url.split(';base64,');
+      parts.push({
+        inlineData: {
+          mimeType: mime.split(':')[1],
+          data: data
+        }
+      });
+    }
+  }
+
   const response = await ai.models.generateContent({
     model: "gemini-3-pro-preview",
-    contents: prompt,
+    contents: { parts },
     config: { 
       responseMimeType: "application/json", 
       responseSchema: PLAN_SCHEMA,
       thinkingConfig: { thinkingBudget: 4096 }
     },
   });
-
   const parsed = JSON.parse(response.text || '{"shots":[]}');
   return parsed.shots;
 };
 
-export const suggestNextShotPlan = async (outline: string, style: string, previousShots: Shot[]): Promise<ShotPlan> => {
+export const suggestNextShotPlan = async (
+  outline: string, 
+  style: string, 
+  audioIntent: string,
+  contentConstraints: string,
+  referenceImages: { url: string; label: string }[],
+  previousShots: Shot[]
+): Promise<ShotPlan> => {
   validateApiKey();
   const apiKey = getCurrentApiKey();
   const ai = new GoogleGenAI({ apiKey });
@@ -244,13 +293,29 @@ export const suggestNextShotPlan = async (outline: string, style: string, previo
     Suggest exactly ONE new 8-second ShotPlan that naturally continues the story.
     Global Intent: ${outline}
     Style constraints: ${style}
+    Audio Intent: ${audioIntent}
+    Content Constraints: ${contentConstraints}
     Context: ${context}
     Output strict JSON matching the full ShotPlan production schema.
   `;
 
+  const parts: any[] = [{ text: prompt }];
+  
+  for (const img of referenceImages) {
+    if (img.url.startsWith('data:')) {
+      const [mime, data] = img.url.split(';base64,');
+      parts.push({
+        inlineData: {
+          mimeType: mime.split(':')[1],
+          data: data
+        }
+      });
+    }
+  }
+
   const response = await ai.models.generateContent({
     model: "gemini-3-pro-preview",
-    contents: prompt,
+    contents: { parts },
     config: { 
       responseMimeType: "application/json", 
       responseSchema: SINGLE_PLAN_SCHEMA,
@@ -264,24 +329,64 @@ export const suggestNextShotPlan = async (outline: string, style: string, previo
 export const generateVideoAttempt = async (
   shotPlan: ShotPlan, 
   options: { useSeed: boolean, useRefImage: boolean, requestExplanation: boolean },
-  previousVideoUrl?: string
+  referenceImages: { url: string; label: string }[] = []
 ): Promise<Partial<GenerationAttempt>> => {
   validateApiKey();
   const apiKey = getCurrentApiKey();
   const ai = new GoogleGenAI({ apiKey });
   
   const model = "veo-3.1-generate-preview";
+  
+  // Enhance prompt with shot plan specifics if not already present
   let finalPrompt = shotPlan.videoPrompt;
+  
+  // Explicitly add constraints and audio mood to the prompt to ensure Veo follows them
+  if (shotPlan.mustInclude?.length > 0) {
+    finalPrompt += `\nMust include: ${shotPlan.mustInclude.join(", ")}.`;
+  }
+  if (shotPlan.mustAvoid?.length > 0) {
+    finalPrompt += `\nMust avoid: ${shotPlan.mustAvoid.join(", ")}.`;
+  }
+  if (shotPlan.mood) {
+    finalPrompt += `\nMood: ${shotPlan.mood}.`;
+  }
+  if (shotPlan.audioIntent) {
+    finalPrompt += `\nVisual pacing should match audio intent: ${shotPlan.audioIntent}.`;
+  }
   
   if (options.requestExplanation) {
     finalPrompt += "\n\nProvide a technical explanation of your design choices and a self-assigned confidence level (Low/Medium/High).";
   }
 
   try {
+    const referenceImagesPayload: any[] = [];
+    
+    // Veo supports up to 3 reference images
+    const imagesToUse = referenceImages.slice(0, 3);
+    
+    for (const img of imagesToUse) {
+      if (img.url.startsWith('data:')) {
+        const [mimePart, data] = img.url.split(';base64,');
+        const mimeType = mimePart.split(':')[1];
+        referenceImagesPayload.push({
+          image: {
+            imageBytes: data,
+            mimeType: mimeType,
+          },
+          referenceType: "ASSET",
+        });
+      }
+    }
+
     const requestPayload: any = {
       model,
       prompt: finalPrompt,
-      config: { numberOfVideos: 1, resolution: '720p', aspectRatio: '16:9' }
+      config: { 
+        numberOfVideos: 1, 
+        resolution: '720p', 
+        aspectRatio: '16:9',
+        referenceImages: referenceImagesPayload.length > 0 ? referenceImagesPayload : undefined
+      }
     };
 
     let operation: any = await ai.models.generateVideos(requestPayload);

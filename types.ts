@@ -118,6 +118,9 @@ export interface Project {
   createdAt: number;
   globalStoryPrompt: string;
   styleConstraints: string;
+  audioIntent: string;
+  contentConstraints: string;
+  referenceImages: AnnotatedImage[];
   evaluationMode: boolean; // Always true in this version
   shots: Shot[];
   runs: EvaluationRun[];

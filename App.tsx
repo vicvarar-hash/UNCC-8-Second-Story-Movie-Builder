@@ -48,17 +48,36 @@ const App: React.FC = () => {
   const [phase, setPhase] = useState<'plan' | 'produce' | 'validate' | 'export'>('plan');
   const [project, setProject] = useState<Project>(() => {
     const saved = localStorage.getItem("EVAL_PROJECT");
-    return saved ? JSON.parse(saved) : {
+    const defaultProject: Project = {
       id: Math.random().toString(36).substr(2, 9),
       title: "New Evaluation Project",
       createdAt: Date.now(),
       globalStoryPrompt: "",
       styleConstraints: "",
+      audioIntent: "",
+      contentConstraints: "",
+      referenceImages: [],
       evaluationMode: true, 
       shots: [],
       runs: [],
       validationReviews: []
     };
+    
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return {
+        ...defaultProject,
+        ...parsed,
+        // Ensure new fields are initialized even if missing in parsed
+        audioIntent: parsed.audioIntent || "",
+        contentConstraints: parsed.contentConstraints || "",
+        referenceImages: parsed.referenceImages || [],
+        shots: parsed.shots || [],
+        runs: parsed.runs || [],
+        validationReviews: parsed.validationReviews || []
+      };
+    }
+    return defaultProject;
   });
 
   const [isProcessing, setIsProcessing] = useState(false);
@@ -110,6 +129,9 @@ const App: React.FC = () => {
       createdAt: Date.now(),
       globalStoryPrompt: "",
       styleConstraints: "",
+      audioIntent: "",
+      contentConstraints: "",
+      referenceImages: [],
       evaluationMode: true,
       shots: [],
       runs: [],
@@ -125,7 +147,14 @@ const App: React.FC = () => {
   const handleGeneratePlan = async () => {
     setIsProcessing(true);
     try {
-      const plans = await generateProjectPlan(project.globalStoryPrompt, project.styleConstraints, 3);
+      const plans = await generateProjectPlan(
+        project.globalStoryPrompt, 
+        project.styleConstraints, 
+        project.audioIntent,
+        project.contentConstraints,
+        project.referenceImages,
+        3
+      );
       const newShots: Shot[] = plans.map((p, i) => ({
         id: Math.random().toString(36).substr(2, 9),
         index: i,
@@ -146,7 +175,14 @@ const App: React.FC = () => {
   const handleSuggestNextShot = async () => {
     setIsProcessing(true);
     try {
-      const plan = await suggestNextShotPlan(project.globalStoryPrompt, project.styleConstraints, project.shots);
+      const plan = await suggestNextShotPlan(
+        project.globalStoryPrompt, 
+        project.styleConstraints, 
+        project.audioIntent,
+        project.contentConstraints,
+        project.referenceImages,
+        project.shots
+      );
       const newShot: Shot = {
         id: Math.random().toString(36).substr(2, 9),
         index: project.shots.length,
@@ -216,8 +252,8 @@ const App: React.FC = () => {
     try {
       // Always use the prompt from the plan (which is editable in the UI)
       const attemptData = await generateVideoAttempt(shot.plan, { 
-        useSeed: true, useRefImage: false, requestExplanation: true 
-      });
+        useSeed: true, useRefImage: project.referenceImages.length > 0, requestExplanation: true 
+      }, project.referenceImages);
       
       const newAttempt: GenerationAttempt = {
         id: Math.random().toString(36).substr(2, 9),
@@ -271,7 +307,8 @@ const App: React.FC = () => {
       const result = await runAISelfReview(frames, {
         story: project.globalStoryPrompt,
         constraints: project.styleConstraints,
-        plan: JSON.stringify(shot.plan)
+        plan: JSON.stringify(shot.plan),
+        referenceImages: project.referenceImages
       });
 
       setProject(prev => ({
@@ -308,7 +345,8 @@ const App: React.FC = () => {
       const result = await runAISelfReview(frames, {
         story: validationContext.story,
         constraints: validationContext.constraints,
-        plan: validationContext.shotPlan
+        plan: validationContext.shotPlan,
+        referenceImages: project.referenceImages
       });
       const newReview: ValidationReview = {
         id: Math.random().toString(36).substr(2, 9),
@@ -546,8 +584,64 @@ const App: React.FC = () => {
             <div className="lg:col-span-2 space-y-8">
               <div className="bg-gray-900 p-8 rounded-3xl border border-gray-800 shadow-xl">
                 <div className="space-y-6">
-                  <textarea value={project.globalStoryPrompt} onChange={e => setProject(prev => ({ ...prev, globalStoryPrompt: e.target.value }))} className="w-full bg-gray-800 border border-gray-700 rounded-2xl p-4 min-h-[120px] outline-none focus:ring-1 focus:ring-indigo-500 transition-all" placeholder="Global Story Intent..." />
-                  <input value={project.styleConstraints} onChange={e => setProject(prev => ({ ...prev, styleConstraints: e.target.value }))} className="w-full bg-gray-800 border border-gray-700 rounded-xl p-4 outline-none focus:ring-1 focus:ring-indigo-500 transition-all" placeholder="Style Constraints..." />
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest ml-1">Story Intent</label>
+                    <textarea value={project.globalStoryPrompt} onChange={e => setProject(prev => ({ ...prev, globalStoryPrompt: e.target.value }))} className="w-full bg-gray-800 border border-gray-700 rounded-2xl p-4 min-h-[120px] outline-none focus:ring-1 focus:ring-indigo-500 transition-all" placeholder="Global Story Intent..." />
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest ml-1">Style Constraints</label>
+                      <input value={project.styleConstraints} onChange={e => setProject(prev => ({ ...prev, styleConstraints: e.target.value }))} className="w-full bg-gray-800 border border-gray-700 rounded-xl p-4 outline-none focus:ring-1 focus:ring-indigo-500 transition-all" placeholder="Style Constraints..." />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest ml-1">Audio Intent</label>
+                      <input value={project.audioIntent} onChange={e => setProject(prev => ({ ...prev, audioIntent: e.target.value }))} className="w-full bg-gray-800 border border-gray-700 rounded-xl p-4 outline-none focus:ring-1 focus:ring-indigo-500 transition-all" placeholder="Audio Intent (e.g., Orchestral, Lo-fi)..." />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest ml-1">Content Constraints</label>
+                    <input value={project.contentConstraints} onChange={e => setProject(prev => ({ ...prev, contentConstraints: e.target.value }))} className="w-full bg-gray-800 border border-gray-700 rounded-xl p-4 outline-none focus:ring-1 focus:ring-indigo-500 transition-all" placeholder="Content Constraints (e.g., No violence, PG-rated)..." />
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-gray-500 uppercase tracking-widest">Reference Images (Optional)</label>
+                    <div className="flex flex-wrap gap-4">
+                      {(project.referenceImages || []).map(img => (
+                        <div key={img.id} className="relative group">
+                          <img src={img.url} alt={img.label} className="w-20 h-20 object-cover rounded-lg border border-gray-700" />
+                          <button 
+                            onClick={() => setProject(prev => ({ ...prev, referenceImages: (prev.referenceImages || []).filter(i => i.id !== img.id) }))}
+                            className="absolute -top-2 -right-2 bg-red-600 rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <XCircleIcon className="w-3 h-3 text-white" />
+                          </button>
+                        </div>
+                      ))}
+                      <label className="w-20 h-20 flex flex-col items-center justify-center border-2 border-dashed border-gray-700 rounded-lg hover:border-indigo-500 cursor-pointer transition-all">
+                        <PlusIcon className="w-6 h-6 text-gray-500" />
+                        <input 
+                          type="file" 
+                          className="hidden" 
+                          accept="image/*" 
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onload = (event) => {
+                                const url = event.target?.result as string;
+                                setProject(prev => ({
+                                  ...prev,
+                                  referenceImages: [...(prev.referenceImages || []), { id: Math.random().toString(36).substr(2, 9), url, label: file.name }]
+                                }));
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }} 
+                        />
+                      </label>
+                    </div>
+                  </div>
+                  
                   <div className="grid grid-cols-2 gap-4">
                     <button onClick={handleGeneratePlan} disabled={isProcessing} className="bg-indigo-600 hover:bg-indigo-500 py-4 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all">
                       {isProcessing ? <Spinner size="sm" /> : <SparklesIcon className="w-5 h-5" />} Full Plan (3 Shots)
