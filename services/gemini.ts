@@ -13,14 +13,19 @@ export const getCurrentApiKey = (): string => {
   return process.env.API_KEY || '';
 };
 
-/** Trust gate: fail fast before any AI call. Throws if API key is missing or invalid. */
-function validateApiKey(): void {
-  const key = getCurrentApiKey();
+/** Pure validation logic: throws if key is missing or too short. Testable without browser mocks. */
+export function validateApiKeyLogic(key: string): void {
   if (!key || key.length < 10) {
     throw new Error(
       "API key is required. Set GEMINI_API_KEY in localStorage or use the key selector in the app header."
     );
   }
+}
+
+/** Trust gate: fail fast before any AI call. Throws if API key is missing or invalid. */
+function validateApiKey(): void {
+  const key = getCurrentApiKey();
+  validateApiKeyLogic(key);
 }
 
 export const __VALIDATION_ONLY_REMOVE_ME__ = (): void => {
