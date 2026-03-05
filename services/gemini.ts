@@ -22,15 +22,35 @@ export function validateApiKeyLogic(key: string): void {
   }
 }
 
+/** Max wait for Veo video generation (5 min). Prevents indefinite hangs (TR7). */
+const VIDEO_GENERATION_MAX_WAIT_MS = 5 * 60 * 1000;
+
+/** Thrown when Veo polling exceeds max wait. Surface to UI (TR7). */
+export class VideoGenerationTimeoutError extends Error {
+  constructor(message: string = "TimeoutError: Video generation timed out after 5 minutes.") {
+    super(message);
+    this.name = "VideoGenerationTimeoutError";
+  }
+}
+
 /** Trust gate: fail fast before any AI call. Throws if API key is missing or invalid. */
 function validateApiKey(): void {
   const key = getCurrentApiKey();
   validateApiKeyLogic(key);
 }
 
-export const __VALIDATION_ONLY_REMOVE_ME__ = (): void => {
-  validateApiKey();
-};
+/** Safe JSON parse: throws with clear message on parse failure. Never returns empty object silently. */
+function safeParseJson<T>(raw: string, fallback: string, context: string): T {
+  const text = raw?.trim() || fallback;
+  try {
+    return JSON.parse(text) as T;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      `AI response parse error (${context}): ${msg}. Raw preview: ${text.slice(0, 200)}...`
+    );
+  }
+}
 
 const RUBRIC_SCHEMA = {
   type: Type.OBJECT,
@@ -170,7 +190,7 @@ export const runAISelfReview = async (
     },
   });
 
-  return JSON.parse(response.text || '{}');
+  return safeParseJson<SelfReviewRubric>(response.text ?? "", "{}", "runAISelfReview");
 };
 
 const PLAN_ITEM_PROPS = {
@@ -276,7 +296,11 @@ export const generateProjectPlan = async (
       thinkingConfig: { thinkingBudget: 4096 }
     },
   });
-  const parsed = JSON.parse(response.text || '{"shots":[]}');
+  const parsed = safeParseJson<{ shots: ShotPlan[] }>(
+    response.text ?? "",
+    '{"shots":[]}',
+    "generateProjectPlan"
+  );
   return parsed.shots;
 };
 
@@ -328,7 +352,7 @@ export const suggestNextShotPlan = async (
     },
   });
 
-  return JSON.parse(response.text || '{}');
+  return safeParseJson<ShotPlan>(response.text ?? "", "{}", "suggestNextShotPlan");
 };
 
 export const generateVideoAttempt = async (
@@ -395,7 +419,13 @@ export const generateVideoAttempt = async (
     };
 
     let operation: any = await ai.models.generateVideos(requestPayload);
+    const deadline = Date.now() + VIDEO_GENERATION_MAX_WAIT_MS;
     while (!operation.done) {
+      if (Date.now() > deadline) {
+        throw new VideoGenerationTimeoutError(
+          `Video generation timed out after ${VIDEO_GENERATION_MAX_WAIT_MS / 1000}s.`
+        );
+      }
       await new Promise(resolve => setTimeout(resolve, 10000));
       operation = await ai.operations.getVideosOperation({ operation: operation });
     }

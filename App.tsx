@@ -10,7 +10,7 @@ import {
 import { 
   Project, Shot, ShotPlan, GenerationAttempt, Outcome, 
   ValidationReview, SelfReviewRubric
-} from './types';
+} from "./types";
 import { Spinner } from './components/Spinner';
 import { 
   FilmIcon, SparklesIcon, Cog8ToothIcon, BeakerIcon, ArrowDownTrayIcon,
@@ -22,6 +22,19 @@ import {
   EyeIcon, SpeakerWaveIcon, ShieldCheckIcon, TrashIcon,
   LockClosedIcon, LockOpenIcon
 } from '@heroicons/react/24/solid';
+
+const REQUIRED_PLAN_FIELDS = ["narrativeIntent", "videoPrompt", "action"] as const;
+
+/** Validates plan structure before creating shots. Throws on missing required fields (schema drift detection). */
+function validateShotPlan(plan: Partial<ShotPlan>, context?: string): asserts plan is ShotPlan {
+  const missing = REQUIRED_PLAN_FIELDS.filter((f) => !plan[f] || String(plan[f]).trim() === "");
+  if (missing.length > 0) {
+    throw new Error(
+      `Plan structure validation failed: missing required fields (${missing.join(", ")}). ` +
+        (context ? `Context: ${context}` : "Reject invalid plan before creating shots.")
+    );
+  }
+}
 
 const SCRIPTS = {
   "Script 1: Continuity Drift": {
@@ -155,6 +168,7 @@ const App: React.FC = () => {
         project.referenceImages,
         3
       );
+      for (const p of plans) validateShotPlan(p, "generateProjectPlan");
       const newShots: Shot[] = plans.map((p, i) => ({
         id: Math.random().toString(36).substr(2, 9),
         index: i,
@@ -183,6 +197,7 @@ const App: React.FC = () => {
         project.referenceImages,
         project.shots
       );
+      validateShotPlan(plan, "suggestNextShotPlan");
       const newShot: Shot = {
         id: Math.random().toString(36).substr(2, 9),
         index: project.shots.length,
