@@ -45,6 +45,8 @@ export interface GenerationAttempt {
     useRefImage: boolean;
   };
   selfReview?: SelfReviewRubric;
+  /** Base64 JPEG data URL of the video's last frame — used as continuity seed for the next shot */
+  lastFrameUrl?: string;
 }
 
 export interface ValidationReview {
