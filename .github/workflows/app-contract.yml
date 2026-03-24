@@ -1,16 +1,14 @@
-name: App Contract Tests
+# Scheduled trust-gate sweep + manual runs. No browser e2e (keeps minutes low).
+name: Contract sweep
 
 on:
-  push:
-    branches: [main, merged]
-  pull_request:
-    branches: [main, merged]
   workflow_dispatch:
   schedule:
-    - cron: "*/10 * * * *" # every 10 minutes
+    # Mondays 14:00 UTC — drift check without hammering the runner every 10 minutes
+    - cron: "0 14 * * 1"
 
 jobs:
-  contract-tests:
+  contracts:
     runs-on: ubuntu-latest
     env:
       APP_FILE: App.tsx
@@ -36,22 +34,6 @@ jobs:
         id: contracts
         run: node scripts/run-contracts.mjs
 
-      - name: Install Playwright (Chromium + system deps)
-        run: npx playwright install chromium --with-deps
-
-      - name: Run E2E tests
-        run: npm run test:e2e
-
-      - name: Upload Playwright report on failure
-        if: failure()
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report
-          path: playwright-report/
-          retention-days: 7
-          if-no-files-found: ignore
-
       # If contract suite fails, create/update ONE issue (no spam).
       - name: Create or update issue on failure (no spam)
         if: failure()
@@ -69,7 +51,7 @@ jobs:
 
               const body = [
                 marker,
-                `Automated contract suite failed for the app.`,
+                `Scheduled or manual contract sweep failed.`,
                 ``,
                 `**Contracts:** 01 presets, 02 phases, 03 types/lineage, 04 attempts append-only, 05 export bundle, 06 API key (trust gate)`,
                 ``,
@@ -78,7 +60,7 @@ jobs:
                 ``,
                 `**What to do**`,
                 `- Open the run logs and fix the first failing contract.`,
-                `- Re-run or wait for the next scheduled run.`,
+                `- Re-run from Actions or wait for the next weekly run.`,
                 `- See \`docs/CONTRACTS.md\` for contract details.`,
                 ``,
                 `_This issue is automatically maintained (no duplicates)._`,
@@ -127,7 +109,6 @@ jobs:
               core.warning(`Issue creation/update skipped: ${e.message}`);
             }
 
-      # If suite passes, close the open contract issue (if any). Best-effort.
       - name: Close contract issue if passing
         if: success()
         continue-on-error: true
