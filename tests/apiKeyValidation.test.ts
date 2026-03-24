@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validateApiKeyLogic } from "app/services/gemini.ts";
+import { validateApiKeyLogic } from "../services/gemini.ts";
 
 describe("validateApiKeyLogic", () => {
   it("throws when key is empty", () => {
