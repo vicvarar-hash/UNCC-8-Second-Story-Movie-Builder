@@ -99,7 +99,7 @@ export const sampleFrames = async (videoSrc: string | File, count: number = 3): 
 
     video.crossOrigin = "anonymous";
     video.muted = true;
-    
+
     if (typeof videoSrc === 'string') {
       video.src = videoSrc;
     } else {
@@ -109,7 +109,7 @@ export const sampleFrames = async (videoSrc: string | File, count: number = 3): 
     video.onloadedmetadata = async () => {
       const duration = video.duration;
       const interval = duration / (count + 1);
-      
+
       for (let i = 1; i <= count; i++) {
         video.currentTime = interval * i;
         await new Promise(r => { video.onseeked = r; });
@@ -126,10 +126,10 @@ export const sampleFrames = async (videoSrc: string | File, count: number = 3): 
 };
 
 export const runAISelfReview = async (
-  frames: string[], 
-  context: { 
-    story: string; 
-    constraints: string; 
+  frames: string[],
+  context: {
+    story: string;
+    constraints: string;
     plan?: string;
     referenceImages?: { url: string; label: string }[]
   }
@@ -164,7 +164,7 @@ export const runAISelfReview = async (
   `;
 
   const parts: any[] = frames.map(f => ({ inlineData: { mimeType: 'image/jpeg', data: f } }));
-  
+
   if (context.referenceImages) {
     for (const img of context.referenceImages) {
       if (img.url.startsWith('data:')) {
@@ -184,9 +184,9 @@ export const runAISelfReview = async (
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
     contents: { parts: parts as any },
-    config: { 
-      responseMimeType: "application/json", 
-      responseSchema: RUBRIC_SCHEMA 
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: RUBRIC_SCHEMA
     },
   });
 
@@ -230,7 +230,7 @@ const PLAN_SCHEMA = {
         type: Type.OBJECT,
         properties: PLAN_ITEM_PROPS,
         required: [
-          "narrativeIntent", "shotType", "cameraMovement", "cameraAngle", "lens", 
+          "narrativeIntent", "shotType", "cameraMovement", "cameraAngle", "lens",
           "framingSubject", "compositionNotes", "colorPalette", "vfxNotes",
           "soundBed", "musicCue", "sfx", "dialogueStyle", "continuityLocks",
           "keyProps", "characterState", "mustInclude", "mustAvoid",
@@ -249,8 +249,8 @@ const SINGLE_PLAN_SCHEMA = {
 };
 
 export const generateProjectPlan = async (
-  outline: string, 
-  style: string, 
+  outline: string,
+  style: string,
   audioIntent: string,
   contentConstraints: string,
   referenceImages: { url: string; label: string }[],
@@ -259,7 +259,7 @@ export const generateProjectPlan = async (
   validateApiKey();
   const apiKey = getCurrentApiKey();
   const ai = new GoogleGenAI({ apiKey });
-  
+
   const prompt = `
     Create a detailed shot-by-shot movie plan for an 8-second story builder.
     Story: ${outline}
@@ -274,7 +274,7 @@ export const generateProjectPlan = async (
   `;
 
   const parts: any[] = [{ text: prompt }];
-  
+
   for (const img of referenceImages) {
     if (img.url.startsWith('data:')) {
       const [mime, data] = img.url.split(';base64,');
@@ -290,8 +290,8 @@ export const generateProjectPlan = async (
   const response = await ai.models.generateContent({
     model: "gemini-3-pro-preview",
     contents: { parts },
-    config: { 
-      responseMimeType: "application/json", 
+    config: {
+      responseMimeType: "application/json",
       responseSchema: PLAN_SCHEMA,
       thinkingConfig: { thinkingBudget: 4096 }
     },
@@ -305,8 +305,8 @@ export const generateProjectPlan = async (
 };
 
 export const suggestNextShotPlan = async (
-  outline: string, 
-  style: string, 
+  outline: string,
+  style: string,
   audioIntent: string,
   contentConstraints: string,
   referenceImages: { url: string; label: string }[],
@@ -317,7 +317,7 @@ export const suggestNextShotPlan = async (
   const ai = new GoogleGenAI({ apiKey });
 
   const context = previousShots.map(s => `Shot ${s.index + 1}: ${s.plan.narrativeIntent}. Action: ${s.plan.action}`).join("\n");
-  
+
   const prompt = `
     Suggest exactly ONE new 8-second ShotPlan that naturally continues the story.
     Global Intent: ${outline}
@@ -329,7 +329,7 @@ export const suggestNextShotPlan = async (
   `;
 
   const parts: any[] = [{ text: prompt }];
-  
+
   for (const img of referenceImages) {
     if (img.url.startsWith('data:')) {
       const [mime, data] = img.url.split(';base64,');
@@ -345,8 +345,8 @@ export const suggestNextShotPlan = async (
   const response = await ai.models.generateContent({
     model: "gemini-3-pro-preview",
     contents: { parts },
-    config: { 
-      responseMimeType: "application/json", 
+    config: {
+      responseMimeType: "application/json",
       responseSchema: SINGLE_PLAN_SCHEMA,
       thinkingConfig: { thinkingBudget: 2048 }
     },
@@ -356,19 +356,20 @@ export const suggestNextShotPlan = async (
 };
 
 export const generateVideoAttempt = async (
-  shotPlan: ShotPlan, 
+  shotPlan: ShotPlan,
   options: { useSeed: boolean, useRefImage: boolean, requestExplanation: boolean },
-  referenceImages: { url: string; label: string }[] = []
+  referenceImages: { url: string; label: string }[] = [],
+  continuityFrame?: { data: string; mimeType: string }
 ): Promise<Partial<GenerationAttempt>> => {
   validateApiKey();
   const apiKey = getCurrentApiKey();
   const ai = new GoogleGenAI({ apiKey });
-  
+
   const model = "veo-3.1-generate-preview";
-  
+
   // Enhance prompt with shot plan specifics if not already present
   let finalPrompt = shotPlan.videoPrompt;
-  
+
   // Explicitly add constraints and audio mood to the prompt to ensure Veo follows them
   if (shotPlan.mustInclude?.length > 0) {
     finalPrompt += `\nMust include: ${shotPlan.mustInclude.join(", ")}.`;
@@ -382,17 +383,39 @@ export const generateVideoAttempt = async (
   if (shotPlan.audioIntent) {
     finalPrompt += `\nVisual pacing should match audio intent: ${shotPlan.audioIntent}.`;
   }
-  
+
+  // ── Continuity seeding ─────────────────────────────────────────────
+  // When a last-frame from the previous shot is provided, instruct Veo to
+  // use it as the visual starting state so the transition feels seamless.
+  if (continuityFrame) {
+    finalPrompt +=
+      "\n\nCINEMATIC CONTINUITY INSTRUCTION: The provided reference image is the LAST FRAME of the immediately preceding shot. " +
+      "Begin this shot from that exact visual state — preserve camera position, lighting, character positions, environment, and color grade. " +
+      "The transition must be seamless, as if this is one continuous camera take.";
+  }
+
   if (options.requestExplanation) {
     finalPrompt += "\n\nProvide a technical explanation of your design choices and a self-assigned confidence level (Low/Medium/High).";
   }
 
   try {
     const referenceImagesPayload: any[] = [];
-    
-    // Veo supports up to 3 reference images
-    const imagesToUse = referenceImages.slice(0, 3);
-    
+
+    // ── Continuity frame goes FIRST so Veo treats it as primary visual context ──
+    if (continuityFrame) {
+      referenceImagesPayload.push({
+        image: {
+          imageBytes: continuityFrame.data,
+          mimeType: continuityFrame.mimeType,
+        },
+        referenceType: "ASSET",
+      });
+    }
+
+    // Project reference images (up to 3 total slots)
+    const remainingSlots = 3 - referenceImagesPayload.length;
+    const imagesToUse = referenceImages.slice(0, remainingSlots);
+
     for (const img of imagesToUse) {
       if (img.url.startsWith('data:')) {
         const [mimePart, data] = img.url.split(';base64,');
@@ -410,9 +433,9 @@ export const generateVideoAttempt = async (
     const requestPayload: any = {
       model,
       prompt: finalPrompt,
-      config: { 
-        numberOfVideos: 1, 
-        resolution: '720p', 
+      config: {
+        numberOfVideos: 1,
+        resolution: '720p',
         aspectRatio: '16:9',
         referenceImages: referenceImagesPayload.length > 0 ? referenceImagesPayload : undefined
       }
@@ -436,7 +459,7 @@ export const generateVideoAttempt = async (
     const downloadUrl = `${videoUri}&key=${apiKey}`;
     const response = await fetch(downloadUrl, { method: 'GET', mode: 'cors' });
     if (!response.ok) throw new Error(`Download failed: ${response.status}`);
-    
+
     const blob = await response.blob();
     return {
       videoUrl: URL.createObjectURL(new Blob([blob], { type: 'video/mp4' })),

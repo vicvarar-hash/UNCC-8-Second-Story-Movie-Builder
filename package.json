@@ -10,15 +10,17 @@
     "lint": "tsc --noEmit",
     "test": "vitest run",
     "test:fault-inject": "node scripts/inject-fault.mjs",
-    "contracts": "node scripts/run-contracts.mjs"
+    "contracts": "node scripts/run-contracts.mjs",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
-    "react-dom": "^19.2.0",
     "@google/genai": "^1.30.0",
+    "@heroicons/react": "^2.2.0",
     "react": "^19.2.0",
-    "@heroicons/react": "^2.2.0"
+    "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
