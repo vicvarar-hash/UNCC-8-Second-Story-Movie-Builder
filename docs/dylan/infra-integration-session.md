@@ -93,6 +93,18 @@ npm run test:fault-inject # Fault caught as expected
 
 ---
 
+## Sync with `origin/main` (2026-03-24)
+
+To stay aligned with teammate work on `main` **without modifying `main`**:
+
+- Ran `git merge origin/main` **into** branch `merged` (one-way: Victor’s commits onto `merged`).
+- **Conflict:** `package.json` — kept infra scripts (`test`, `contracts`, `test:fault-inject`) and added `test:e2e` (Playwright) from `main`.
+- **Brought in from `main`:** e.g. requirements PDF / uploads per commits `00667d9`, `f26b44a`; app changes as merged by Git.
+- **Verification:** `npm run test` and `npm run contracts` — all green after merge.
+- **`main` on remote:** not pushed to or rewritten by this step; only `merged` was updated.
+
+---
+
 ## Optional Follow-Ups (from plan)
 
 - Merge `merged` into `main` via PR when ready
