@@ -17,4 +17,8 @@ View your app in AI Studio: https://ai.studio/apps/bbc546fd-085e-450b-8f0f-e776c
    `npm install`
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
-   `npm run dev`
+   `npm run dev` (opens on **http://127.0.0.1:3000**)
+
+## Tests & CI
+
+See [docs/dylan/ci-and-e2e-session.md](docs/dylan/ci-and-e2e-session.md) for lint/unit/contracts/E2E commands and GitHub Actions layout.
