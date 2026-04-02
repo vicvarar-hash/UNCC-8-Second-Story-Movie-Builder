@@ -1,0 +1,66 @@
+
+> uncc-8-second-story-movie-builder@0.0.0 test:fault-inject
+> node scripts/inject-fault.mjs
+
+≡ƒöº Injecting fault: key.length < 10 ΓåÆ key.length > 10
+
+> uncc-8-second-story-movie-builder@0.0.0 test
+> vitest run
+
+
+[1m[7m[36m RUN [39m[27m[22m [36mv2.1.9 [39m[90mD:/2026/Spring/8010/group project/UNCC-8-Second-Story-Movie-Builder[39m
+
+ [31mΓ¥»[39m tests/apiKeyValidation.test.ts [2m([22m[2m3 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[90m 7[2mms[22m[39m
+[31m   [31m├ù[31m validateApiKeyLogic[2m > [22mthrows when key is too short (< 10 chars)[90m 4[2mms[22m[31m[39m
+[31m     ΓåÆ expected [Function] to throw an error[39m
+[31m   [31m├ù[31m validateApiKeyLogic[2m > [22mdoes not throw when key is valid (>= 10 chars)[90m 1[2mms[22m[31m[39m
+[31m     ΓåÆ expected [Function] to not throw an error but 'Error: API key is required. Set GEMINΓÇª' was thrown[39m
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ» Failed Tests 2 ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»
+
+ FAIL  tests/apiKeyValidation.test.ts > validateApiKeyLogic > throws when key is too short (< 10 chars)
+AssertionError: expected [Function] to throw an error
+
+- Expected: 
+null
+
++ Received: 
+undefined
+
+ Γ¥» tests/apiKeyValidation.test.ts:12:48
+     10| 
+     11|   it("throws when key is too short (< 10 chars)", () => {
+     12|     expect(() => validateApiKeyLogic("short")).toThrow(
+       |                                                ^
+     13|       "API key is required. Set GEMINI_API_KEY in localStorage or use ΓÇª
+     14|     );
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[1/2]ΓÄ»
+
+ FAIL  tests/apiKeyValidation.test.ts > validateApiKeyLogic > does not throw when key is valid (>= 10 chars)
+AssertionError: expected [Function] to not throw an error but 'Error: API key is required. Set GEMINΓÇª' was thrown
+
+- Expected: 
+undefined
+
++ Received: 
+"Error: API key is required. Set GEMINI_API_KEY in localStorage or use the key selector in the app header."
+
+ Γ¥» tests/apiKeyValidation.test.ts:20:59
+     18|   it("does not throw when key is valid (>= 10 chars)", () => {
+     19|     expect(() => validateApiKeyLogic("1234567890")).not.toThrow();
+     20|     expect(() => validateApiKeyLogic("a".repeat(20))).not.toThrow();
+       |                                                           ^
+     21|   });
+     22| });
+
+ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»ΓÄ»[2/2]ΓÄ»
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m1 passed[39m[22m[90m (3)[39m
+[2m   Start at [22m 17:55:40
+[2m   Duration [22m 510ms[2m (transform 58ms, setup 0ms, collect 128ms, tests 7ms, environment 0ms, prepare 169ms)[22m
+
+Γ£à Restored original file.
+
+Γ£à Fault was CAUGHT (tests failed as expected). Document in Artifacts repo: docs/INCIDENTS.md

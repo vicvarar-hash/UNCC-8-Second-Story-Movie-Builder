@@ -14,7 +14,7 @@ Contracts live in `contracts/` and are run by `scripts/run-contracts.mjs`. Each 
 
 **What it checks:**
 - `App.tsx` contains `phase === 'plan'`, "Load Preset Script"
-- All three preset scripts: "Script 1: Continuity Drift", "Script 2: Plausible Planning Errors", "Script 3: Misleading Explanations"
+- Required preset scripts (minimum): "Script 1: Continuity Drift", "Script 2: Plausible Planning Errors", "Script 3: Misleading Explanations" (additional presets, e.g. "Script 4: Boca Cola Commercial", may exist)
 
 **Maps to:** Plan stage and preset loader for evaluation scenarios
 

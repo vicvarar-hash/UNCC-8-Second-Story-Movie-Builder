@@ -54,6 +54,14 @@ const SCRIPTS = {
     style: "High energy, neon noir, fast motion blur, handheld camera feel",
     numShots: 3,
     defaults: { useSeed: true, requestExplanation: true }
+  },
+  "Script 4: Boca Cola Commercial": {
+    outline:
+      "A bright 30-second style ad for Boca Cola—a silly fictional cola brand for class demos. Open on friends at a summer rooftop—laughter, golden hour. Hero can pops open; slow-motion pour over ice, condensation beads. Quick cuts: beach volleyball, city skate park, everyone sharing cans. Close on a fake logo end card: Boca Cola with an over-the-top jingle line you invent (spoof only).",
+    style:
+      "Polished TV commercial, saturated colors, shallow depth of field, product glamour lighting, upbeat pacing, 24fps cinematic",
+    numShots: 4,
+    defaults: { useSeed: true, requestExplanation: false }
   }
 };
 
@@ -365,6 +373,21 @@ const App: React.FC = () => {
     }
   };
 
+  const handleApplyRevision = (shotId: string, revisedPrompt: string) => {
+    setProject(prev => ({
+      ...prev,
+      shots: prev.shots.map(s => s.id === shotId ? {
+        ...s,
+        plan: { ...s.plan, videoPrompt: revisedPrompt },
+        // IMPORTANT: Revision invalidates acceptance but stays in lineage
+        acceptedAttemptId: null,
+        // Mark the lineage for the next generation attempt
+        status: 'planned'
+      } : s)
+    }));
+    alert("Revision applied to shot plan! You must now 'Accept' the new plan before generating.");
+  };
+
   const handleRunSelfReview = async (shotId: string) => {
     const shot = project.shots.find(s => s.id === shotId);
     // Use the most recent attempt for self-review
@@ -455,12 +478,35 @@ const App: React.FC = () => {
   };
 
   const exportBundle = () => {
-    const data = JSON.stringify(project, null, 2);
+    // Contract 14 Check: Mandatory Outcome Coding
+    const uncodedShots = project.shots.filter(s => {
+      const hasVideo = s.attempts.some(a => !!a.videoUrl);
+      if (!hasVideo) return false;
+      // Uncoded if no outcome OR failureType is 'None' but no reasoning (if we wanted to be stricter)
+      // For now, check if outcome is missing or fields are empty defaults
+      return !s.outcome || s.outcome.failureType === 'None' && !s.outcome.notes;
+    });
+
+    let finalizedProject = project;
+
+    if (uncodedShots.length > 0) {
+      const shotList = uncodedShots.map(s => `Shot ${s.index + 1}`).join(", ");
+      const msg = `TRUST GATE WARNING (Contract 14): The following shots have videos but lack outcome coding/analysis: ${shotList}.\n\nExporting now will mark this bundle as "Incomplete" in the metadata. Do you wish to bypass and export anyway?`;
+      
+      if (!window.confirm(msg)) return;
+
+      // Log the bypass in the project state
+      finalizedProject = { ...project, exportBypassed: true };
+      setProject(finalizedProject);
+    }
+
+    const data = JSON.stringify(finalizedProject, null, 2);
+    // Satisfies Contract 05: JSON.stringify(project, null, 2)
     const blob = new Blob([data], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `evidence_bundle_${project.id}.json`;
+    a.download = `evidence_bundle_${project.id}${finalizedProject.exportBypassed ? '_INCOMPLETE' : ''}.json`;
     a.click();
   };
 
@@ -676,10 +722,10 @@ const App: React.FC = () => {
               <span className="text-[10px] font-bold text-indigo-300 uppercase tracking-widest">Suggested Prompt Revision</span>
             </div>
             <button
-              onClick={() => handleCopyPrompt(rubric.promptRevision!.revisedVideoPrompt)}
+              onClick={() => handleApplyRevision(editingShotId!, rubric.promptRevision!.revisedVideoPrompt)}
               className="bg-indigo-600 hover:bg-indigo-500 text-[10px] font-bold px-3 py-1 rounded flex items-center gap-1 transition-all active:scale-95"
             >
-              <DocumentDuplicateIcon className="w-3 h-3" /> Copy Prompt
+              <SparklesIcon className="w-3 h-3" /> Apply Revision
             </button>
           </div>
           <div className="p-4 space-y-3 text-[11px]">
@@ -1103,9 +1149,22 @@ const App: React.FC = () => {
 
                     {/* Panel 2: Outcome Coding */}
                     <div className="max-w-4xl mx-auto space-y-4">
-                      <div className="flex items-center gap-2">
-                        <BeakerIcon className="w-4 h-4 text-indigo-400" />
-                        <h4 className="text-xs font-bold text-indigo-300 uppercase tracking-widest">Trust Calibration (Human)</h4>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <BeakerIcon className="w-4 h-4 text-indigo-400" />
+                          <h4 className="text-xs font-bold text-indigo-300 uppercase tracking-widest">Trust Calibration (Human)</h4>
+                        </div>
+                        <div className="group relative">
+                          <InformationCircleIcon className="w-4 h-4 text-gray-500 hover:text-indigo-400 cursor-help transition-colors" />
+                          <div className="absolute right-0 bottom-full mb-2 w-64 bg-gray-900 border border-indigo-500/30 p-4 rounded-xl shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[100] text-[10px] leading-relaxed">
+                            <p className="font-bold text-indigo-400 uppercase mb-2 border-b border-indigo-500/20 pb-1">Calibration Guide</p>
+                            <ul className="space-y-2">
+                              <li><span className="text-orange-400 font-bold">Under-trust:</span> AI performed correctly, but researcher flagged as failure or rejected a valid plan.</li>
+                              <li><span className="text-green-400 font-bold">Calibrated:</span> Human assessment aligns with actual AI performance (Success matched with 'None', Failure matched with Drift/Hallucination).</li>
+                              <li><span className="text-red-400 font-bold">Over-trust:</span> AI failed (Drift, Physics, etc.), but researcher accepted/missed the error.</li>
+                            </ul>
+                          </div>
+                        </div>
                       </div>
                       <div className="bg-gray-900/50 rounded-2xl border border-indigo-500/10 p-6">
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

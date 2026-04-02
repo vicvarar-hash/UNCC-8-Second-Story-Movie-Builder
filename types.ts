@@ -124,6 +124,7 @@ export interface Project {
   contentConstraints: string;
   referenceImages: AnnotatedImage[];
   evaluationMode: boolean; // Always true in this version
+  exportBypassed?: boolean; // Set when user confirms export with missing outcomes
   shots: Shot[];
   runs: EvaluationRun[];
   validationReviews: ValidationReview[];

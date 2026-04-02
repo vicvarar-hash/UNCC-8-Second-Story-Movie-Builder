@@ -1,0 +1,24 @@
+
+> uncc-8-second-story-movie-builder@0.0.0 contracts
+> node scripts/run-contracts.mjs
+
+Γ£à [01] Plan preset scripts (SCRIPTS keys + shape)
+Γ£à [02] Phase model union (plan/produce/validate/export)
+Γ£à [03] Types: lineage + acceptance fields exist
+Γ£à [04] Attempts are append-only (no overwrite)
+Γ£à [05] Evidence bundle export exists
+Γ£à [06] API key validation (trust gate, TR6)
+Γ£à [07] Safe JSON parse with error surfacing
+Γ£à [08] Video generation timeout (TR7)
+Γ£à [09] Plan structure validation before shots
+Γ£à [10] No video generation without explicit acceptance
+Γ£à [11] Expanded project context persists + reaches planning/generation/review
+Γ£à [12] Rubric completeness check before use
+Γ£à [13] Evidence export completeness
+Γ£à [14] Mandatory outcome coding before export
+Γ£à [15] Frame sampling quality check
+Γ£à [16] Error classification for trust analysis
+Γ£à [17] Trust calibration guidance
+Γ£à [18] Continuity metadata honesty
+
+≡ƒÄë All contracts passed.
