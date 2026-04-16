@@ -1,0 +1,156 @@
+# Scheduled trust-gate sweep + manual runs. No browser e2e (keeps minutes low).
+name: Contract sweep
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Mondays 14:00 UTC — drift check without hammering the runner every 10 minutes
+    - cron: "0 14 * * 1"
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    env:
+      APP_FILE: App.tsx
+      TYPES_FILE: types.ts
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm run test
+
+      - name: Run contract suite
+        id: contracts
+        run: node scripts/run-contracts.mjs
+
+      # If contract suite fails, create/update ONE issue (no spam).
+      - name: Create or update issue on failure (no spam)
+        if: failure()
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              const owner = context.repo.owner;
+              const repo = context.repo.repo;
+              const title = "CI Contract Failed: App contract suite";
+              const label = "ci-contract";
+              const marker = "<!-- CI_CONTRACT_SUITE -->";
+              const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+              const body = [
+                marker,
+                `Scheduled or manual contract sweep failed.`,
+                ``,
+                `**Contracts:** 01 presets, 02 phases, 03 types/lineage, 04 attempts append-only, 05 export bundle, 06 API key (trust gate)`,
+                ``,
+                `**Run**`,
+                `${runUrl}`,
+                ``,
+                `**What to do**`,
+                `- Open the run logs and fix the first failing contract.`,
+                `- Re-run from Actions or wait for the next weekly run.`,
+                `- See \`docs/CONTRACTS.md\` for contract details.`,
+                ``,
+                `_This issue is automatically maintained (no duplicates)._`,
+              ].join("\n");
+
+              try {
+                await github.rest.issues.createLabel({
+                  owner,
+                  repo,
+                  name: label,
+                  color: "d73a4a",
+                  description: "Contract tests"
+                });
+              } catch {}
+
+              const { data: issues } = await github.rest.issues.listForRepo({
+                owner,
+                repo,
+                state: "open",
+                labels: label,
+                per_page: 100
+              });
+
+              const existing = issues.find(i => i.title === title || (i.body && i.body.includes(marker)));
+
+              if (existing) {
+                await github.rest.issues.update({
+                  owner,
+                  repo,
+                  issue_number: existing.number,
+                  title,
+                  body,
+                });
+                core.info(`Updated existing issue #${existing.number}.`);
+              } else {
+                const created = await github.rest.issues.create({
+                  owner,
+                  repo,
+                  title,
+                  body,
+                  labels: [label],
+                });
+                core.info(`Created new issue #${created.data.number}.`);
+              }
+            } catch (e) {
+              core.warning(`Issue creation/update skipped: ${e.message}`);
+            }
+
+      - name: Close contract issue if passing
+        if: success()
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              const owner = context.repo.owner;
+              const repo = context.repo.repo;
+              const title = "CI Contract Failed: App contract suite";
+              const label = "ci-contract";
+              const marker = "<!-- CI_CONTRACT_SUITE -->";
+
+              const { data: issues } = await github.rest.issues.listForRepo({
+                owner,
+                repo,
+                state: "open",
+                labels: label,
+                per_page: 100
+              });
+
+              const existing = issues.find(i => i.title === title || (i.body && i.body.includes(marker)));
+
+              if (existing) {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: existing.number,
+                  body: `✅ Contract suite is passing again. Closing this issue automatically.`
+                });
+
+                await github.rest.issues.update({
+                  owner,
+                  repo,
+                  issue_number: existing.number,
+                  state: "closed"
+                });
+
+                core.info(`Closed issue #${existing.number} because contract suite is passing.`);
+              } else {
+                core.info("No open contract issue found to close.");
+              }
+            } catch (e) {
+              core.warning(`Issue close skipped: ${e.message}`);
+            }
