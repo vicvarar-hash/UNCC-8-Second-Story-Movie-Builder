@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:fault-inject": "node scripts/inject-fault.mjs",
     "contracts": "node scripts/run-contracts.mjs",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "deploy": "gh-pages -d dist"
   },
   "dependencies": {
     "@google/genai": "^1.30.0",
@@ -23,6 +24,7 @@
     "@playwright/test": "^1.58.2",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "gh-pages": "^6.3.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0",
     "vitest": "^2.1.0"
